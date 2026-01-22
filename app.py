@@ -1,3 +1,5 @@
+# Flask Web应用主文件，处理HTTP请求，提供Web界面和API接口
+
 import os
 import torch
 import threading
@@ -5,20 +7,31 @@ import base64
 from io import BytesIO
 from flask import Flask, render_template, jsonify, request
 from rdkit import Chem
-from rdkit.Chem import Draw, QED, Descriptors
+from rdkit.Chem import Draw
 
 from model import MoleculeVAE
-from reconstruct import logits_to_smiles
+from reconstruct import logits_to_smiles, evaluate_molecule
 from train import train_custom_model
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR = os.path.join(BASE_DIR, "models")
-UPLOAD_DIR = os.path.join(BASE_DIR, "custom_datasets")
-os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+from config import BASE_DIR, MODEL_DIR, UPLOAD_DIR, get_device
 
 app = Flask(__name__)
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = get_device()
+
+# 加载模型，尝试不同的隐藏维度直到成功
+def load_model(model_path, device):
+    if not os.path.exists(model_path):
+        return None
+    
+    for dim in [128, 64, 32, 256]:
+        try:
+            model = MoleculeVAE(hidden_channels=dim, latent_dim=32).to(device)
+            model.load_state_dict(torch.load(model_path, map_location=device))
+            print(f"✅ 成功加载 {dim} 维度的模型: {os.path.basename(model_path)}")
+            return model
+        except Exception as e:
+            continue
+    
+    return None
 
 training_status = {
     "status": "idle",
@@ -30,6 +43,7 @@ training_status = {
     "batch_size": 0
 }
 
+# 将分子的SMILES字符串转换为Base64编码的图像
 def mol_to_base64(smiles):
     mol = Chem.MolFromSmiles(smiles)
     if mol:
@@ -39,26 +53,23 @@ def mol_to_base64(smiles):
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
     return None
 
-def evaluate_molecule(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    if not mol: return None
-    return {"qed": round(QED.qed(mol), 3), "logp": round(Descriptors.MolLogP(mol), 3),
-            "mw": round(Descriptors.MolWt(mol), 2), "hbd": Descriptors.NumHDonors(mol),
-            "hba": Descriptors.NumHAcceptors(mol)}
-
+# 渲染主页面模板
 @app.route('/')
 def index():
     return render_template('index.html')
 
+# 获取所有.pth模型文件并返回排序后的列表
 @app.route('/get_models')
 def get_models():
     models = [f for f in os.listdir(MODEL_DIR) if f.endswith('.pth')]
     return jsonify({"models": sorted(list(set(models)))})
 
+# 返回当前训练状态信息
 @app.route('/get_train_status')
 def get_status():
     return jsonify(training_status)
 
+# 接收训练参数，启动后台训练任务
 @app.route('/start_train', methods=['POST'])
 def start_train():
     global training_status
@@ -89,7 +100,7 @@ def start_train():
     thread.start()
     return jsonify({"msg": "训练任务已成功启动"})
 
-
+# 使用训练好的模型生成新分子
 @app.route('/generate', methods=['POST'])
 def generate():
     data = request.json
@@ -100,17 +111,7 @@ def generate():
     if not os.path.exists(model_path):
         return jsonify({"error": "找不到模型"}), 404
 
-    # 尝试常见的几个维度，直到加载成功
-    model = None
-    for dim in [128, 64, 32, 256]:
-        try:
-            temp_model = MoleculeVAE(hidden_channels=dim, latent_dim=32).to(DEVICE)
-            temp_model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-            model = temp_model
-            print(f"✅ 成功加载 {dim} 维度的模型: {model_file}")
-            break
-        except Exception as e:
-            continue
+    model = load_model(model_path, DEVICE)
 
     if model is None:
         return jsonify({"error": "模型维度不匹配或文件损坏，无法加载"}), 500

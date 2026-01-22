@@ -1,0 +1,118 @@
+/* CSS Variables */
+:root {
+    --sidebar-width: 260px;
+    --primary-color: #1e3c72;
+}
+
+/* Base Styles */
+body {
+    display: flex;
+    height: 100vh;
+    background: #f0f2f5;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+/* Sidebar Styles */
+.sidebar {
+    width: var(--sidebar-width);
+    background: var(--primary-color);
+    color: white;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-header {
+    padding: 30px 20px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.nav-menu {
+    padding: 20px 10px;
+    flex-grow: 1;
+}
+
+.nav-item {
+    color: rgba(255, 255, 255, 0.7);
+    padding: 12px 20px;
+    cursor: pointer;
+    border-radius: 10px;
+    margin-bottom: 8px;
+    transition: 0.3s;
+    display: flex;
+    align-items: center;
+}
+
+.nav-item i {
+    font-size: 1.2rem;
+    margin-right: 15px;
+}
+
+.nav-item:hover, .nav-item.active {
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+}
+
+/* Content Area Styles */
+.content {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 40px;
+}
+
+.card {
+    border: none;
+    border-radius: 15px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+
+/* Training Logs Styles */
+#trainLogs {
+    height: 250px;
+    overflow-y: auto;
+    font-family: 'Consolas', monospace;
+    font-size: 13px;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    padding: 15px;
+    border-radius: 10px;
+    margin-top: 15px;
+    line-height: 1.5;
+}
+
+#trainLogs div {
+    border-bottom: 1px dashed #eee;
+    padding: 3px 0;
+    color: #333;
+}
+
+/* Property Box Styles */
+.prop-box {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 15px;
+    text-align: center;
+    border: 1px solid #eee;
+}
+
+.prop-val {
+    font-size: 1.4rem;
+    font-weight: bold;
+    color: var(--primary-color);
+}
+
+.prop-label {
+    font-size: 0.8rem;
+    color: #666;
+}
+
+/* Molecule Image Styles */
+#molImg {
+    max-width: 100%;
+    height: auto;
+    border-radius: 10px;
+    background: white;
+}

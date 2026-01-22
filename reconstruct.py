@@ -1,21 +1,26 @@
+# 实现分子重建和评估功能，将模型输出转换为SMILES字符串并评估分子性质
+
 import torch
+import os
 from rdkit import Chem
 from rdkit.Chem import ValenceType
 from rdkit import RDLogger
 from rdkit.Chem import QED, Descriptors
+from model import MoleculeVAE
+from config import MODEL_DIR, DEFAULT_MODEL_NAME, DEFAULT_HIDDEN_DIM, LATENT_DIM, DEFAULT_GENERATE_ATTEMPTS, DEFAULT_GENERATE_BATCH_SIZE, get_device
 
 
+# 评估分子的物理化学性质
 def evaluate_molecule(smiles):
     mol = Chem.MolFromSmiles(smiles)
     if not mol: return None
 
     try:
-        # 计算文档要求的各项指标
-        qed_score = QED.qed(mol)  # 类药性
-        logp_score = Descriptors.MolLogP(mol)  # 脂水分配系数
-        mw_score = Descriptors.MolWt(mol)  # 分子量
-        hbd = Descriptors.NumHDonors(mol)  # 氢键供体
-        hba = Descriptors.NumHAcceptors(mol)  # 氢键受体
+        qed_score = QED.qed(mol)
+        logp_score = Descriptors.MolLogP(mol)
+        mw_score = Descriptors.MolWt(mol)
+        hbd = Descriptors.NumHDonors(mol)
+        hba = Descriptors.NumHAcceptors(mol)
 
         return {
             "qed": round(qed_score, 3),
@@ -31,13 +36,12 @@ def evaluate_molecule(smiles):
 RDLogger.DisableLog('rdApp.*')
 
 
+# 将模型输出的logits转换为SMILES字符串
 def logits_to_smiles(atom_logits, edge_logits):
-    # 1. 原子映射与最大价态限制
     idx_to_atomic_num = {0: 6, 1: 7, 2: 8, 3: 9, 4: 16, 5: 17}
     atom_valency_limit = {6: 4, 7: 3, 8: 2, 9: 1, 16: 6, 17: 1}
 
     mol = Chem.RWMol()
-    # 预测原子类型 (取每个位置概率最大的原子)
     atom_types = torch.argmax(atom_logits, dim=-1)[0]
 
     added_atoms = []
@@ -46,7 +50,6 @@ def logits_to_smiles(atom_logits, edge_logits):
         atom_idx = mol.AddAtom(Chem.Atom(atomic_num))
         added_atoms.append(atom_idx)
 
-    # 2. 预测边关系并按概率排序
     adj_matrix = torch.sigmoid(edge_logits[0])
     edges = []
     for i in range(len(added_atoms)):
@@ -54,42 +57,74 @@ def logits_to_smiles(atom_logits, edge_logits):
             edges.append((adj_matrix[i, j].item(), i, j))
     edges.sort(reverse=True)
 
-    # 3. 按照化学规则连线
     for prob, i, j in edges:
-        if prob > 0.65:  # 略微提高阈值，保证分子质量
+        if prob > 0.65:
             try:
                 atom_i = mol.GetAtomWithIdx(i)
                 atom_j = mol.GetAtomWithIdx(j)
-
-                # 更新属性缓存，确保价态计算准确
                 atom_i.UpdatePropertyCache(strict=False)
                 atom_j.UpdatePropertyCache(strict=False)
-
-                # 使用最新规范的 GetValence 方法，彻底消除警告
                 current_v_i = atom_i.GetValence(which=ValenceType.EXPLICIT)
                 current_v_j = atom_j.GetValence(which=ValenceType.EXPLICIT)
-
                 limit_i = atom_valency_limit.get(atom_i.GetAtomicNum(), 4)
                 limit_j = atom_valency_limit.get(atom_j.GetAtomicNum(), 4)
-
-                # 只有在双方都有“空位”时才连线
                 if current_v_i < limit_i and current_v_j < limit_j:
                     mol.AddBond(i, j, Chem.BondType.SINGLE)
             except:
                 continue
 
-                # 4. 后处理：提取合法分子
     try:
         final_mol = mol.GetMol()
-        # 自动清洗分子（处理电荷、价态平衡等）
         Chem.SanitizeMol(final_mol)
-
-        # 过滤掉碎片，只保留最大的连通体
         frags = Chem.GetMolFrags(final_mol, asMols=True)
         if not frags:
             return None
         res_mol = max(frags, key=lambda x: x.GetNumAtoms())
-
         return Chem.MolToSmiles(res_mol)
     except:
         return None
+
+
+# 从潜在空间生成分子
+def real_generate():
+    device = get_device()
+    print(f"正在使用设备: {device}")
+
+    model = MoleculeVAE(hidden_channels=DEFAULT_HIDDEN_DIM, latent_dim=LATENT_DIM).to(device)
+
+    try:
+        default_model_path = os.path.join(MODEL_DIR, f"{DEFAULT_MODEL_NAME}.pth")
+        model.load_state_dict(torch.load(default_model_path, map_location=device))
+        print("✅ 已成功加载 VAE 模型权重。")
+    except FileNotFoundError:
+        print(f"⚠️ 未找到 {DEFAULT_MODEL_NAME}.pth，将使用随机初始化的模型进行演示。")
+
+    model.eval()
+
+    print("\n--- 正在从潜在空间进行批量采样生成 ---")
+
+    success_count = 0
+    max_attempts = DEFAULT_GENERATE_ATTEMPTS
+
+    with torch.no_grad():
+        for i in range(max_attempts):
+            z = torch.randn(DEFAULT_GENERATE_BATCH_SIZE, LATENT_DIM).to(device)
+            atom_logits = model.decoder_atoms(z).view(-1, 20, 10)
+            edge_logits = model.decoder_edges(z).view(-1, 20, 20)
+            res_smiles = logits_to_smiles(atom_logits, edge_logits)
+
+            if res_smiles and len(res_smiles) > 1:
+                print(f"🎉 尝试第 {i + 1} 次 - 成功生成分子: {res_smiles}")
+                success_count += 1
+            else:
+                print(f"❌ 尝试第 {i + 1} 次 - 生成无效（化学规则拦截）")
+
+    if success_count == 0:
+        print("\n结论：本次采样未捕获到合法分子。")
+        print("建议方案：1. 增加 train.py 的训练轮数；2. 增加数据集样本量。")
+    else:
+        print(f"\n生成结束，共获得 {success_count} 个合法分子。")
+
+
+if __name__ == "__main__":
+    real_generate()

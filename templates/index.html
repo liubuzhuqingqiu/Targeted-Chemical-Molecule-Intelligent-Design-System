@@ -5,51 +5,24 @@
     <title>AI 靶向分子设计平台</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
-    <style>
-        :root { --sidebar-width: 260px; --primary-color: #1e3c72; }
-        body { display: flex; height: 100vh; background: #f0f2f5; font-family: 'Segoe UI', system-ui, sans-serif; }
-        .sidebar { width: var(--sidebar-width); background: var(--primary-color); color: white; flex-shrink: 0; display: flex; flex-direction: column; }
-        .sidebar-header { padding: 30px 20px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .nav-menu { padding: 20px 10px; flex-grow: 1; }
-        .nav-item { color: rgba(255,255,255,0.7); padding: 12px 20px; cursor: pointer; border-radius: 10px; margin-bottom: 8px; transition: 0.3s; display: flex; align-items: center; }
-        .nav-item i { font-size: 1.2rem; margin-right: 15px; }
-        .nav-item:hover, .nav-item.active { background: rgba(255,255,255,0.15); color: white; }
-        .content { flex-grow: 1; overflow-y: auto; padding: 40px; }
-        .card { border: none; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
-
-        /* 增量滚动日志框样式 */
-        #trainLogs {
-            height: 250px;
-            overflow-y: auto;
-            font-family: 'Consolas', monospace;
-            font-size: 13px;
-            background: #fff;
-            border: 1px solid #dee2e6;
-            padding: 15px;
-            border-radius: 10px;
-            margin-top: 15px;
-            line-height: 1.5;
-        }
-        #trainLogs div { border-bottom: 1px dashed #eee; padding: 3px 0; color: #333; }
-
-        .prop-box { background: #f8f9fa; border-radius: 10px; padding: 15px; text-align: center; border: 1px solid #eee; }
-        .prop-val { font-size: 1.4rem; font-weight: bold; color: var(--primary-color); }
-        .prop-label { font-size: 0.8rem; color: #666; }
-        #molImg { max-width: 100%; height: auto; border-radius: 10px; background: white; }
-    </style>
+    <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
-
-    <div class="sidebar">
-        <div class="sidebar-header"><h4><i class="bi bi-capsule-pill"></i> 智能分子平台</h4></div>
-        <div class="nav-menu">
+    <!-- 侧边导航栏 -->
+    <aside class="sidebar">
+        <header class="sidebar-header">
+            <h4><i class="bi bi-capsule-pill"></i> 智能分子平台</h4>
+        </header>
+        <nav class="nav-menu">
             <div class="nav-item active" onclick="switchTab('genPanel', this)"><i class="bi bi-cpu"></i> 分子生成服务</div>
             <div class="nav-item" onclick="switchTab('trainPanel', this)"><i class="bi bi-database-add"></i> 模型训练管理</div>
-        </div>
-    </div>
+        </nav>
+    </aside>
 
-    <div class="content">
-        <div id="genPanel">
+    <!-- 主内容区域 -->
+    <main class="content">
+        <!-- 分子生成面板 -->
+        <section id="genPanel">
             <div class="row g-4">
                 <div class="col-lg-4">
                     <div class="card p-4">
@@ -97,9 +70,10 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div id="trainPanel" style="display:none;">
+        <!-- 模型训练面板 -->
+        <section id="trainPanel" style="display:none;">
             <div class="card p-4 mx-auto" style="max-width: 800px;">
                 <h4 class="mb-4 text-primary"><i class="bi bi-gear-fill"></i> 模型训练配置中心</h4>
                 <form id="trainForm">
@@ -151,131 +125,9 @@
                     <div id="trainLogs"></div>
                 </div>
             </div>
-        </div>
-    </div>
+        </section>
+    </main>
 
-    <script>
-        let pollInterval;
-        let displayedCount = 0; // 记录已显示的日志条数
-
-        function switchTab(id, el) {
-            document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-            el.classList.add('active');
-            document.getElementById('genPanel').style.display = id === 'genPanel' ? 'block' : 'none';
-            document.getElementById('trainPanel').style.display = id === 'trainPanel' ? 'block' : 'none';
-        }
-
-        async function loadModels() {
-            try {
-                const res = await fetch('/get_models');
-                const data = await res.json();
-                const s = document.getElementById('modelSelect');
-                s.innerHTML = data.models.map(m => `<option value="${m}">${m}</option>`).join('');
-            } catch(e) { console.error("模型列表获取失败"); }
-        }
-
-        async function startPolling() {
-            const bar = document.getElementById('trainProgressBar');
-            const statusText = document.getElementById('statusText');
-            const logArea = document.getElementById('trainLogs');
-            const btn = document.getElementById('trainBtn'); // 获取按钮引用
-
-            pollInterval = setInterval(async () => {
-                try {
-                    const res = await fetch('/get_train_status');
-                    const data = await res.json();
-
-                    if (data.status === "training" || data.status === "success" || data.status === "error") {
-                        // 更新进度条
-                        const progress = Math.round((data.current_epoch / data.total_epochs) * 100);
-                        bar.style.width = progress + "%";
-
-                        // 增量日志显示：只打印数组中新出来的部分
-                        if (data.logs && data.logs.length > displayedCount) {
-                            for (let i = displayedCount; i < data.logs.length; i++) {
-                                const div = document.createElement('div');
-                                div.innerText = data.logs[i];
-                                logArea.appendChild(div);
-                                displayedCount++;
-                            }
-                            // 自动滚动到底部
-                            logArea.scrollTop = logArea.scrollHeight;
-                        }
-
-                        // 当状态不再是 training 时（成功或失败）恢复按钮
-                        if (data.status === "success" || data.status === "error") {
-                            clearInterval(pollInterval);
-
-                            btn.disabled = false; // 恢复按钮
-                            btn.innerHTML = `<i class="bi bi-rocket-takeoff"></i> 启动异步训练任务`;
-
-                            if (data.status === "success") {
-                                statusText.innerText = "✅ 训练已成功完成";
-                                bar.classList.remove('progress-bar-animated');
-                                loadModels(); // 自动刷新模型下拉列表
-                            } else {
-                                statusText.innerText = "❌ 训练出现错误";
-                            }
-                        } else {
-                            statusText.innerText = "模型训练中...";
-                        }
-                    }
-                } catch (e) { console.error("轮询异常"); }
-            }, 800);
-        }
-
-        document.getElementById('trainForm').onsubmit = async (e) => {
-            e.preventDefault();
-
-            // --- 锁定按钮 ---
-            const btn = document.getElementById('trainBtn');
-            btn.disabled = true;
-            btn.innerHTML = `<span class="spinner-border spinner-border-sm"></span> 训练任务运行中...`;
-
-            // 重置 UI 状态
-            document.getElementById('trainNotify').classList.remove('d-none');
-            document.getElementById('trainLogs').innerHTML = "";
-            displayedCount = 0;
-
-            const formData = new FormData(e.target);
-            try {
-                await fetch('/start_train', { method: 'POST', body: formData });
-                startPolling(); // 开始监听后端 logs 列表
-            } catch (e) {
-                alert("启动失败，请检查后端连接");
-                // 报错时恢复按钮
-                btn.disabled = false;
-                btn.innerHTML = `<i class="bi bi-rocket-takeoff"></i> 启动异步训练任务`;
-            }
-        };
-
-        // 分子生成逻辑
-        document.getElementById('genBtn').onclick = async function() {
-            this.disabled = true; this.innerText = "生成中...";
-            try {
-                const res = await fetch('/generate', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        target: document.getElementById('targetSelect').value,
-                        model_file: document.getElementById('modelSelect').value
-                    })
-                });
-                const d = await res.json();
-                if(!d.error) {
-                    document.getElementById('emptyState').style.display = 'none';
-                    document.getElementById('resultDisplay').style.display = 'block';
-                    document.getElementById('molImg').src = 'data:image/png;base64,' + d.image;
-                    document.getElementById('smilesCode').innerText = d.smiles;
-                    document.getElementById('qedVal').innerText = d.metrics.qed;
-                    document.getElementById('logpVal').innerText = d.metrics.logp;
-                    document.getElementById('mwVal').innerText = d.metrics.mw;
-                    document.getElementById('moreMetrics').innerText = `氢键供体: ${d.metrics.hbd} | 氢键受体: ${d.metrics.hba}`;
-                } else { alert(d.error); }
-            } catch (e) { alert("生成请求失败"); } finally { this.disabled = false; this.innerText = "执行生成"; }
-        };
-
-        window.onload = loadModels;
-    </script>
+    <script src="/static/js/main.js"></script>
 </body>
 </html>
