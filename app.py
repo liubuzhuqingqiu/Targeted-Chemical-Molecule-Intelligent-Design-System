@@ -14,7 +14,9 @@ from reconstruct import logits_to_smiles, evaluate_molecule
 from train import train_custom_model
 from config import BASE_DIR, MODEL_DIR, UPLOAD_DIR, get_device
 
+# Flask应用实例，用于处理HTTP请求和路由
 app = Flask(__name__)
+# 设备信息，自动检测并使用可用的GPU或CPU
 DEVICE = get_device()
 
 # 加载模型，尝试不同的隐藏维度直到成功
@@ -33,14 +35,15 @@ def load_model(model_path, device):
     
     return None
 
+# 训练状态全局变量，用于跟踪和返回训练进度信息
 training_status = {
-    "status": "idle",
-    "current_epoch": 0,
-    "total_epochs": 0,
-    "loss": 0.0,
-    "logs": [],
-    "lr": 0.0,
-    "batch_size": 0
+    "status": "idle",          # 训练状态：idle（空闲）、training（训练中）、success（成功）、error（错误）
+    "current_epoch": 0,         # 当前训练轮次
+    "total_epochs": 0,          # 总训练轮次
+    "loss": 0.0,                # 当前训练损失值
+    "logs": [],                 # 训练日志信息
+    "lr": 0.0,                  # 学习率
+    "batch_size": 0             # 批次大小
 }
 
 # 将分子的SMILES字符串转换为Base64编码的图像
@@ -101,11 +104,12 @@ def start_train():
     return jsonify({"msg": "训练任务已成功启动"})
 
 # 使用训练好的模型生成新分子
+# 实现性质导向优化：在潜在空间中使用梯度上升引导生成方向
 @app.route('/generate', methods=['POST'])
 def generate():
     data = request.json
     model_file = data.get('model_file')
-    target = data.get('target', 'random')
+    target = data.get('target', 'random')  # 生成目标：high_qed（高药物评估值）、high_logp（高脂水分配系数）或random（随机）
     model_path = os.path.join(MODEL_DIR, model_file)
 
     if not os.path.exists(model_path):
@@ -120,21 +124,56 @@ def generate():
 
     best_mol = None
     best_score = -float('inf')
-    with torch.no_grad():
-        for _ in range(30):
+    
+    try:
+        # 尝试多个初始点
+        for init_idx in range(5):
+            # 在潜在空间中随机初始化
             z = torch.randn(1, 32).to(DEVICE)
-            atom_logits = model.decoder_atoms(z).view(-1, 20, 10)
-            edge_logits = model.decoder_edges(z).view(-1, 20, 20)
-            smiles = logits_to_smiles(atom_logits, edge_logits)
-            if smiles:
-                m = evaluate_molecule(smiles)
-                if not m: continue
-                score = m['qed'] if target == 'high_qed' else (-m['logp'] if target == 'low_logp' else 1)
-                if score > best_score:
-                    best_score = score
-                    best_mol = {"smiles": smiles, "metrics": m, "image": mol_to_base64(smiles)}
+            z.requires_grad_(True)
+            
+            # 梯度上升优化
+            if target != 'random':
+                optimizer = torch.optim.Adam([z], lr=0.1)
+                for step in range(20):
+                    optimizer.zero_grad()
+                    # 预测性质
+                    properties = model.predict_properties(z)
+                    qed_pred = properties[0, 0]
+                    logp_pred = properties[0, 1]
+                    
+                    # 根据目标计算损失函数
+                    if target == 'high_qed':
+                        loss = -qed_pred  # 最大化QED
+                    elif target == 'high_logp':
+                        loss = -logp_pred  # 最大化LogP
+                    else:
+                        loss = 0
+                    
+                    # 反向传播计算梯度
+                    loss.backward()
+                    optimizer.step()
+            
+            with torch.no_grad():
+                # 解码生成分子
+                atom_logits = model.decoder_atoms(z).view(-1, 20, 10)
+                edge_logits = model.decoder_edges(z).view(-1, 20, 20)
+                smiles = logits_to_smiles(atom_logits, edge_logits)
+                
+                if smiles:
+                    # 评估分子性质
+                    m = evaluate_molecule(smiles)
+                    if not m: continue
+                    # 根据目标计算分数
+                    score = m['qed'] if target == 'high_qed' else (m['logp'] if target == 'high_logp' else 1)
+                    if score > best_score:
+                        best_score = score
+                        best_mol = {"smiles": smiles, "metrics": m, "image": mol_to_base64(smiles)}
 
-    return jsonify(best_mol) if best_mol else jsonify({"error": "未生成有效分子"}), 400
+        return jsonify(best_mol) if best_mol else jsonify({"error": "未生成有效分子"}), 400
+    except Exception as e:
+        print(f"生成分子时出错: {str(e)}")
+        return jsonify({"error": f"生成分子时出错: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

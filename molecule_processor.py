@@ -2,6 +2,7 @@
 
 import torch
 from rdkit import Chem
+from rdkit.Chem import QED, Descriptors
 from torch_geometric.data import Data
 
 
@@ -21,7 +22,16 @@ def smiles_to_graph(smiles):
         edge_indices += [[i, j], [j, i]]
 
     edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
-    return Data(x=x, edge_index=edge_index)
+    
+    # 计算分子性质
+    try:
+        qed = QED.qed(mol)
+        logp = Descriptors.MolLogP(mol)
+        # 将性质添加到数据对象中，形状为[1, 2]，确保批次化时正确堆叠
+        y = torch.tensor([[qed, logp]], dtype=torch.float)
+        return Data(x=x, edge_index=edge_index, y=y)
+    except:
+        return None
 
 
 # 检查分子的化学有效性

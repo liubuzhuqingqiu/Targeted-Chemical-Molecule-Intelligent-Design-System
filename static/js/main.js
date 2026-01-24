@@ -159,7 +159,8 @@ class MoleculeDesignPlatform {
                 alert(data.error);
             }
         } catch (e) {
-            alert("生成请求失败");
+            console.error("生成请求失败:", e);
+            alert("生成请求失败: " + e.message);
         } finally {
             genBtn.disabled = false;
             genBtn.innerText = "执行生成";

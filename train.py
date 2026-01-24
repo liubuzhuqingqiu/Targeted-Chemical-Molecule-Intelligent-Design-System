@@ -9,9 +9,12 @@ from config import DEFAULT_EPOCHS, DEFAULT_LR, DEFAULT_BATCH_SIZE, DEFAULT_HIDDE
 
 
 # 计算VAE损失函数
-def vae_loss(atom_logits, edge_logits, mu, logvar):
+def vae_loss(atom_logits, edge_logits, mu, logvar, properties_pred, properties_true):
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return kl_loss
+    # 性质预测损失（均方误差）
+    prop_loss = torch.mean((properties_pred - properties_true) ** 2)
+    # 组合损失
+    return kl_loss + 0.1 * prop_loss  # 调整性质预测损失的权重
 
 
 # 统一的日志记录函数
@@ -27,7 +30,7 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=10, lr=0.001, 
     device = get_device()
 
     print(f"\n{'=' * 50}")
-    print(f" 🚀 启动训练任务: {model_name}")
+    print(f"启动训练任务: {model_name}")
     print(f" 运行设备: {device}")
     print(f"{'=' * 50}")
 
@@ -46,11 +49,11 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=10, lr=0.001, 
                 log_message(msg, status_dict)
 
     completion_msg = f"数据读取完成，共计: {len(data_list)} 条有效分子"
-    log_message(f"✅ {completion_msg}", status_dict)
+    log_message(f"{completion_msg}", status_dict)
 
     if not data_list:
         if status_dict: status_dict["status"] = "error"
-        log_message("❌ 错误：未发现有效分子数据，训练终止。", status_dict)
+        log_message("错误：未发现有效分子数据，训练终止。", status_dict)
         return
 
     loader = DataLoader(data_list, batch_size=batch_size, shuffle=True)
@@ -64,8 +67,10 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=10, lr=0.001, 
         for batch in loader:
             batch = batch.to(device)
             optimizer.zero_grad()
-            atom_logits, edge_logits, mu, logvar = model(batch)
-            loss = vae_loss(atom_logits, edge_logits, mu, logvar)
+            atom_logits, edge_logits, mu, logvar, properties_pred = model(batch)
+            # 提取性质标签
+            properties_true = batch.y
+            loss = vae_loss(atom_logits, edge_logits, mu, logvar, properties_pred, properties_true)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
@@ -97,7 +102,7 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=10, lr=0.001, 
 
     if status_dict:
         status_dict["status"] = "success"
-        log_message("✅ 训练完成，模型已成功保存至服务器。", status_dict)
+        log_message("训练完成，模型已成功保存至服务器。", status_dict)
 
     if os.path.exists(dataset_path):
         os.remove(dataset_path)
