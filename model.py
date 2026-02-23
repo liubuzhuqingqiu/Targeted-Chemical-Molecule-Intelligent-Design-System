@@ -29,7 +29,7 @@ class MoleculeVAE(nn.Module):
             nn.Linear(latent_dim, 256),
             nn.ReLU(),
             nn.BatchNorm1d(256),
-            nn.Linear(256, max_nodes * max_nodes * 4)
+            nn.Linear(256, max_nodes * max_nodes * 5)
         )
         self.num_predictors = 5
         self.predictors = nn.ModuleList()
@@ -107,7 +107,7 @@ class MoleculeVAE(nn.Module):
         mu, logvar = self.encode(data.x, data.edge_index, data.batch)
         z = self.reparameterize(mu, logvar)
         atom_logits = self.decoder_atoms(z).view(-1, self.max_nodes, NUM_ATOM_TYPES)
-        edge_logits = self.decoder_edges(z).view(-1, self.max_nodes, self.max_nodes, 4)
+        edge_logits = self.decoder_edges(z).view(-1, self.max_nodes, self.max_nodes, 5)
         all_properties = self.predict_properties_ensemble(z)
         properties = all_properties[0]
         return atom_logits, edge_logits, mu, logvar, properties, all_properties

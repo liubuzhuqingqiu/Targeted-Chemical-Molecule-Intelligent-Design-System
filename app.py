@@ -156,300 +156,85 @@ def generate_molecules_core(model_file, constraints, generate_status, sample_cou
         best_score = -float('inf')
         valid_molecules = []
 
-        def calculate_fitness(z, model, constraints, device):
-            with torch.no_grad():
-                n_ensemble = 5
-                qed_preds = []
-                logp_preds = []
-                mw_preds = []
-                hbd_preds = []
-                hba_preds = []
-                
-                for _ in range(n_ensemble):
-                    z_noisy = z + torch.randn_like(z) * 0.01
-                    properties = model.predict_properties(z_noisy)
-                    qed_preds.append(properties[0, 0].item())
-                    logp_preds.append(properties[0, 1].item())
-                    mw_preds.append(properties[0, 4].item())
-                    hbd_preds.append(properties[0, 5].item())
-                    hba_preds.append(properties[0, 6].item())
-                
-                qed_pred = sum(qed_preds) / n_ensemble
-                logp_pred = sum(logp_preds) / n_ensemble
-                mw_pred = sum(mw_preds) / n_ensemble
-                hbd_pred = sum(hbd_preds) / n_ensemble
-                hba_pred = sum(hba_preds) / n_ensemble
-                
-                fitness = 0.0
-                qed_weight = constraints.get('qed_weight', 0.5 if 'qed_min' in constraints else 0.3)
-                fitness += qed_weight * max(qed_pred, constraints.get('qed_min', 0.0))
-                logp_weight = constraints.get('logp_weight', 0.3)
-                fitness += logp_weight * max(0, 1 - abs(logp_pred - sum(constraints['logp_range'])/2) / (constraints['logp_range'][1] - constraints['logp_range'][0] + 1e-6))
-                mw_weight = constraints.get('mw_weight', 0.2)
-                fitness += mw_weight * max(0, 1 - abs(mw_pred - sum(constraints['mw_range'])/2) / (constraints['mw_range'][1] - constraints['mw_range'][0] + 1e-6))
-                
-                penalty = 0
-                mw_center = sum(constraints['mw_range']) / 2
-                mw_range = constraints['mw_range'][1] - constraints['mw_range'][0]
-                penalty += 0.01 * ((mw_pred - mw_center) ** 2) / (mw_range ** 2) * max(0, abs(mw_pred - mw_center) - mw_range/2)
-                
-                logp_center = sum(constraints['logp_range']) / 2
-                logp_range = constraints['logp_range'][1] - constraints['logp_range'][0]
-                penalty += 0.1 * ((logp_pred - logp_center) ** 2) / (logp_range ** 2) * max(0, abs(logp_pred - logp_center) - logp_range/2)
-                
-                if 'hbd_range' in constraints:
-                    hbd_center = sum(constraints['hbd_range']) / 2
-                    hbd_range = constraints['hbd_range'][1] - constraints['hbd_range'][0]
-                    penalty += 0.5 * ((hbd_pred - hbd_center) ** 2) / (hbd_range ** 2 + 1e-6)
-                else:
-                    penalty += 0.5 * max(0, hbd_pred - constraints.get('hbd_max', HBD_MAX))
-                
-                if 'hba_range' in constraints:
-                    hba_center = sum(constraints['hba_range']) / 2
-                    hba_range = constraints['hba_range'][1] - constraints['hba_range'][0]
-                    penalty += 0.3 * ((hba_pred - hba_center) ** 2) / (hba_range ** 2 + 1e-6)
-                else:
-                    penalty += 0.3 * max(0, hba_pred - constraints.get('hba_max', HBA_MAX))
-                
-                if 'sa_score_max' in constraints:
-                    sa_pred = properties[0, 2].item() if properties.shape[1] > 2 else 3.0
-                    penalty += 1.0 * max(0, sa_pred - constraints['sa_score_max']) ** 2
-                
-                lambda_kl = 0.1
-                kl_penalty = lambda_kl * (torch.norm(z) ** 2).item()
-                penalty += kl_penalty
-                
-                from atom_mapping import NUM_ATOM_TYPES
-                atom_logits = model.decoder_atoms(z).view(-1, model.max_nodes, NUM_ATOM_TYPES)
-                edge_logits = model.decoder_edges(z).view(-1, model.max_nodes, model.max_nodes, 4)
-                smiles_list = logits_to_smiles(atom_logits, edge_logits, strict=False)
-                
-                valid_smiles_generated = False
-                for smiles in smiles_list:
-                    if smiles:
-                        m = evaluate_molecule(smiles)
-                        if m:
-                            valid_smiles_generated = True
-                            break
-                
-                if not valid_smiles_generated:
-                    penalty += 1.0
-                
-                final_fitness = fitness - penalty
-                
-                all_predictors_favorable = model.check_all_predictors_favorable(z, constraints)
-                if not all_predictors_favorable:
-                    final_fitness -= 1.0
-                
-                return final_fitness
-
-        def pso_optimization(model, constraints, device, n_particles=20, n_iterations=50, latent_dim=32):
-            particles = torch.randn(n_particles, latent_dim, device=device)
-            velocities = torch.randn(n_particles, latent_dim, device=device) * 0.1
-            
-            personal_best_positions = particles.clone()
-            personal_best_fitness = torch.full((n_particles,), -float('inf'), device=device)
-            global_best_position = None
-            global_best_fitness = -float('inf')
-            
-            w = 0.7
-            c1 = 1.5
-            c2 = 1.5
-            
-            for iteration in range(n_iterations):
-                for i in range(n_particles):
-                    z = particles[i].unsqueeze(0)
-                    fitness = calculate_fitness(z, model, constraints, device)
-                    
-                    if fitness > personal_best_fitness[i]:
-                        personal_best_fitness[i] = fitness
-                        personal_best_positions[i] = particles[i].clone()
-                    
-                    if fitness > global_best_fitness:
-                        global_best_fitness = fitness
-                        global_best_position = particles[i].clone()
-                
-                r1 = torch.rand(n_particles, latent_dim, device=device)
-                r2 = torch.rand(n_particles, latent_dim, device=device)
-                
-                velocities = w * velocities + \
-                             c1 * r1 * (personal_best_positions - particles) + \
-                             c2 * r2 * (global_best_position.unsqueeze(0) - particles)
-                
-                particles = particles + velocities
-                
-                with torch.no_grad():
-                    for i in range(n_particles):
-                        norm = torch.norm(particles[i])
-                        if norm > 3.0:
-                            particles[i] = particles[i] * (3.0 / norm)
-            
-            if global_best_position is None:
-                global_best_position = particles[0]
-            return global_best_position.unsqueeze(0)
-
-        def cma_es_optimization(model, constraints, device, n_individuals=20, n_iterations=50, latent_dim=32):
-            import numpy as np
-            
-            mean = np.zeros(latent_dim)
-            sigma = 0.5
-            
-            C = np.eye(latent_dim)
-            
-            lambda_ = n_individuals
-            mu = lambda_ // 2
-            weights = np.log(mu + 0.5) - np.log(np.arange(1, mu + 1))
-            weights /= np.sum(weights)
-            
-            mueff = np.sum(weights) ** 2 / np.sum(weights ** 2)
-            cc = (4 + mueff / latent_dim) / (latent_dim + 4 + 2 * mueff / latent_dim)
-            cs = (mueff + 2) / (latent_dim + mueff + 5)
-            c1 = 2 / ((latent_dim + 1.3) ** 2 + mueff)
-            cmu = min(1 - c1, 2 * (mueff - 2 + 1 / mueff) / ((latent_dim + 2) ** 2 + mueff))
-            damps = 1 + 2 * max(0, np.sqrt((mueff - 1) / (latent_dim + 1)) - 1) + cs
-            
-            pc = np.zeros(latent_dim)
-            ps = np.zeros(latent_dim)
-            
-            best_fitness = -float('inf')
-            best_solution = None
-            
-            for iteration in range(n_iterations):
-                individuals = []
-                fitnesses = []
-                
-                for _ in range(lambda_):
-                    x = np.random.multivariate_normal(mean, sigma**2 * C)
-                    z = torch.tensor(x, dtype=torch.float32, device=device).unsqueeze(0)
-                    fitness = calculate_fitness(z, model, constraints, device)
-                    
-                    individuals.append(x)
-                    fitnesses.append(fitness)
-                    
-                    if fitness > best_fitness:
-                        best_fitness = fitness
-                        best_solution = x
-                
-                sorted_indices = np.argsort(fitnesses)[::-1]
-                sorted_individuals = [individuals[i] for i in sorted_indices]
-                
-                selected_individuals = sorted_individuals[:mu]
-                
-                old_mean = mean.copy()
-                mean = np.sum([w * ind for w, ind in zip(weights, selected_individuals)], axis=0)
-                
-                ps = (1 - cs) * ps + np.sqrt(cs * (2 - cs) * mueff) * (mean - old_mean) / sigma
-                
-                artmp = [(ind - old_mean) / sigma for ind in selected_individuals]
-                C = (1 - c1 - cmu) * C + c1 * (np.outer(pc, pc) if np.linalg.norm(pc) < np.sqrt(latent_dim + 2) else np.eye(latent_dim))
-                C += cmu * np.sum([w * np.outer(a, a) for w, a in zip(weights, artmp)], axis=0)
-                
-                sigma *= np.exp((cs / damps) * (np.linalg.norm(ps) / np.sqrt(latent_dim) - 1))
-                
-                C = (C + C.T) / 2
-                
-                if np.linalg.norm(mean) > 3.0:
-                    mean = mean * (3.0 / np.linalg.norm(mean))
-            
-            if best_solution is None:
-                best_solution = mean
-            return torch.tensor(best_solution, dtype=torch.float32, device=device).unsqueeze(0)
-
-        generate_status["logs"].append("> 启动多算法优化...")
-        generate_status["logs"].append("> 1. 运行PSO优化...")
-        pso_result = pso_optimization(model, constraints, DEVICE)
-        
-        generate_status["logs"].append("> 2. 运行CMA-ES优化...")
-        cma_es_result = cma_es_optimization(model, constraints, DEVICE)
-        
-        pso_fitness = calculate_fitness(pso_result, model, constraints, DEVICE)
-        cma_es_fitness = calculate_fitness(cma_es_result, model, constraints, DEVICE)
-        
-        generate_status["logs"].append(f"> PSO适应度: {pso_fitness:.4f}")
-        generate_status["logs"].append(f"> CMA-ES适应度: {cma_es_fitness:.4f}")
-        
-        if pso_fitness > cma_es_fitness:
-            generate_status["logs"].append("> 选择PSO结果")
-            best_z = pso_result
-        else:
-            generate_status["logs"].append("> 选择CMA-ES结果")
-            best_z = cma_es_result
-
+        # 简化生成流程：直接在潜空间中随机采样，再用 RDKit 真实性质做筛选
         with torch.no_grad():
             n_samples = sample_count
-            noise = torch.randn(n_samples, 32, device=DEVICE) * 0.12
-            z_samples = best_z.repeat(n_samples, 1) + noise
-            
-            for i in range(n_samples):
-                norm = torch.norm(z_samples[i])
-                if norm > 3.0:
-                    z_samples[i] = z_samples[i] * (3.0 / norm)
-            
-            generate_status["logs"].append("> 开始解码样本...")
+            latent_dim = getattr(model, "latent_dim", 32)
+
+            generate_status["logs"].append("> 直接在潜在空间随机采样...")
             from atom_mapping import NUM_ATOM_TYPES
+
             for i in range(n_samples):
                 generate_status["current_sample"] = i + 1
-                generate_status["logs"].append(f"> 处理样本 {i+1}/{n_samples}")
-                
-                z = z_samples[i].unsqueeze(0)
+                if i % 50 == 0:
+                    generate_status["logs"].append(f"> 处理样本 {i+1}/{n_samples}")
+
+                # 从标准正态采样潜在向量，并限制范数，避免过远区域
+                z = torch.randn(1, latent_dim, device=DEVICE)
+                norm = torch.norm(z)
+                if norm > 3.0:
+                    z = z * (3.0 / norm)
+
                 atom_logits = model.decoder_atoms(z).view(-1, model.max_nodes, NUM_ATOM_TYPES)
-                edge_logits = model.decoder_edges(z).view(-1, model.max_nodes, model.max_nodes, 4)
+                edge_logits = model.decoder_edges(z).view(-1, model.max_nodes, model.max_nodes, 5)
                 smiles_list = logits_to_smiles(atom_logits, edge_logits, strict=False)
-                
+
                 for smiles in smiles_list:
-                    if smiles:
-                        m = evaluate_molecule(smiles)
-                        if not m:
-                            continue
-                        
-                        valid = True
-                        
-                        if m['mw'] < constraints['mw_range'][0] or m['mw'] > constraints['mw_range'][1]:
+                    if not smiles:
+                        continue
+                    m = evaluate_molecule(smiles)
+                    if not m:
+                        continue
+
+                    valid = True
+
+                    # 依据前端/后端约束做最终筛选
+                    if m['mw'] < constraints['mw_range'][0] or m['mw'] > constraints['mw_range'][1]:
+                        valid = False
+                    if 'hbd_range' in constraints:
+                        if m['hbd'] < constraints['hbd_range'][0] or m['hbd'] > constraints['hbd_range'][1]:
                             valid = False
-                        if 'hbd_range' in constraints:
-                            if m['hbd'] < constraints['hbd_range'][0] or m['hbd'] > constraints['hbd_range'][1]:
-                                valid = False
-                        else:
-                            if m['hbd'] > constraints.get('hbd_max', HBD_MAX):
-                                valid = False
-                        if 'hba_range' in constraints:
-                            if m['hba'] < constraints['hba_range'][0] or m['hba'] > constraints['hba_range'][1]:
-                                valid = False
-                        else:
-                            if m['hba'] > constraints.get('hba_max', HBA_MAX):
-                                valid = False
-                        if m['logp'] < constraints['logp_range'][0] or m['logp'] > constraints['logp_range'][1]:
+                    else:
+                        if m['hbd'] > constraints.get('hbd_max', HBD_MAX):
                             valid = False
-                        
-                        if 'rot_bonds_range' in constraints:
-                            if m['rot_bonds'] < constraints['rot_bonds_range'][0] or m['rot_bonds'] > constraints['rot_bonds_range'][1]:
-                                valid = False
-                        else:
-                            if m['rot_bonds'] > constraints.get('rot_bonds_max', ROT_BONDS_MAX):
-                                valid = False
-                        
-                        if m['qed'] < constraints['qed_min']:
+                    if 'hba_range' in constraints:
+                        if m['hba'] < constraints['hba_range'][0] or m['hba'] > constraints['hba_range'][1]:
                             valid = False
-                        
-                        if m['sa_score'] > constraints['sa_score_max']:
+                    else:
+                        if m['hba'] > constraints.get('hba_max', HBA_MAX):
                             valid = False
-                        
-                        if not valid:
-                            continue
-                        
-                        score = 0.3 * m['qed'] + 0.2 * m['logp']
-                        if m['lipinski_ro5_violations'] > 1:
-                            score -= 0.2 * m['lipinski_ro5_violations']
-                        if m['sa_score'] > constraints['sa_score_max']:
-                            score -= 0.1 * (m['sa_score'] - constraints['sa_score_max'])
-                        
-                        mol_obj = {"smiles": smiles, "metrics": m, "image": mol_to_base64(smiles), "score": score}
-                        valid_molecules.append(mol_obj)
-                        
-                        if score > best_score:
-                            best_score = score
-                            best_mol = mol_obj
-                            generate_status["logs"].append(f"> 找到更好的分子，分数: {score}")
+                    if m['logp'] < constraints['logp_range'][0] or m['logp'] > constraints['logp_range'][1]:
+                        valid = False
+
+                    if 'rot_bonds_range' in constraints:
+                        if m['rot_bonds'] < constraints['rot_bonds_range'][0] or m['rot_bonds'] > constraints['rot_bonds_range'][1]:
+                            valid = False
+                    else:
+                        if m['rot_bonds'] > constraints.get('rot_bonds_max', ROT_BONDS_MAX):
+                            valid = False
+
+                    if m['qed'] < constraints['qed_min']:
+                        valid = False
+
+                    if m['sa_score'] > constraints['sa_score_max']:
+                        valid = False
+
+                    if not valid:
+                        continue
+
+                    score = 0.3 * m['qed'] + 0.2 * m['logp']
+                    if m['lipinski_ro5_violations'] > 1:
+                        score -= 0.2 * m['lipinski_ro5_violations']
+                    if m['sa_score'] > constraints['sa_score_max']:
+                        score -= 0.1 * (m['sa_score'] - constraints['sa_score_max'])
+
+                    mol_obj = {"smiles": smiles, "metrics": m, "image": mol_to_base64(smiles), "score": score}
+                    valid_molecules.append(mol_obj)
+
+                    if score > best_score:
+                        best_score = score
+                        best_mol = mol_obj
+                        generate_status["logs"].append(f"> 找到更好的分子，分数: {score}")
 
         generate_status.update({
             "status": "success",

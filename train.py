@@ -16,7 +16,22 @@ def vae_loss(atom_logits, edge_logits, mu, logvar, properties_pred, properties_t
     kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     free_bits = 1.0
     kl_loss = torch.max(kl_loss, torch.tensor(free_bits * batch_size, device=mu.device))
-    property_weights = torch.tensor([100.0, 10.0, 10.0, 50.0, 0.1, 20.0, 10.0], device=mu.device).view(1, -1)
+    # 按照 config.NUM_PROPERTIES 中 10 个属性的顺序设置权重
+    property_weights = torch.tensor(
+        [
+            100.0,  # QED
+            10.0,   # logP
+            5.0,    # heavy_atom_count
+            10.0,   # ring_count
+            0.1,    # MW
+            20.0,   # HBD
+            10.0,   # HBA
+            5.0,    # rotatable_bonds
+            1.0,    # TPSA
+            10.0,   # SA score
+        ],
+        device=mu.device,
+    ).view(1, -1)
     
     prop_loss = torch.tensor(0.0, device=mu.device)
     if properties_true is not None:
@@ -65,16 +80,16 @@ def vae_loss(atom_logits, edge_logits, mu, logvar, properties_pred, properties_t
         edge_true = to_dense_adj(batch.edge_index, batch.batch, max_num_nodes=max_nodes)
         edge_true = edge_true.squeeze(-1)
         edge_labels = edge_true.long()
-        edge_labels = torch.clamp(edge_labels, 0, 3)
+        edge_labels = torch.clamp(edge_labels, 0, 4)
     
-    edge_class_weights = torch.tensor([0.1, 5.0, 7.0, 10.0], device=mu.device)
+    edge_class_weights = torch.tensor([0.1, 5.0, 7.0, 10.0, 8.0], device=mu.device)
     
     loss_per_element = F.cross_entropy(
-        edge_logits.view(-1, 4),
+        edge_logits.view(-1, 5),
         edge_labels.view(-1),
         weight=edge_class_weights,
         reduction='none',
-        ignore_index=4
+        ignore_index=5
     )
     
     masked_loss = loss_per_element * edge_mask.float().view(-1)
@@ -105,7 +120,14 @@ def vae_loss(atom_logits, edge_logits, mu, logvar, properties_pred, properties_t
     valency_violations = torch.clamp(total_bond_order - atom_max_valence, min=0)
     valency_penalty = valency_violations.sum() / (batch_size * max_nodes + 1e-6)
     
-    total_loss = (1.0 * recon_atom_loss) + (5.0 * recon_edge_loss) + (beta * kl_loss / batch_size) + (0.1 * prop_loss) + (0.3 * valency_penalty)
+    # 增强性质损失权重，让模型更认真拟合 QED / logP 等性质
+    total_loss = (
+        1.0 * recon_atom_loss
+        + 3.0 * recon_edge_loss
+        + beta * kl_loss / batch_size
+        + 0.3 * prop_loss
+        + 0.3 * valency_penalty
+    )
     
     recon_loss = recon_atom_loss + recon_edge_loss
     

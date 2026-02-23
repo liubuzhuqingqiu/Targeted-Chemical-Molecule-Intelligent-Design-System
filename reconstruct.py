@@ -292,7 +292,7 @@ def real_generate():
             z = torch.randn(DEFAULT_GENERATE_BATCH_SIZE, LATENT_DIM).to(device)
             from atom_mapping import NUM_ATOM_TYPES
             atom_logits = model.decoder_atoms(z).view(-1, model.max_nodes, NUM_ATOM_TYPES)
-            edge_logits = model.decoder_edges(z).view(-1, model.max_nodes, model.max_nodes, 4)
+            edge_logits = model.decoder_edges(z).view(-1, model.max_nodes, model.max_nodes, 5)
             res_smiles_list = logits_to_smiles(atom_logits, edge_logits)
 
             batch_success = 0

@@ -11,7 +11,18 @@ DEFAULT_MODEL_PATH = os.path.join(MODEL_DIR, f"{DEFAULT_MODEL_NAME}.pth")
 MAX_NODES = 20
 LATENT_DIM = 32
 DEFAULT_HIDDEN_DIM = 128
-NUM_PROPERTIES = 7
+# 属性向量维度：
+# 0: QED
+# 1: logP
+# 2: heavy_atom_count
+# 3: ring_count
+# 4: MW
+# 5: HBD
+# 6: HBA
+# 7: rotatable_bonds
+# 8: TPSA
+# 9: SA score
+NUM_PROPERTIES = 10
 
 DEFAULT_EPOCHS = 50
 DEFAULT_LR = 0.001
