@@ -1,3 +1,6 @@
-安装完需要的环境后直接运行app.py文件
-数据集存放在custom_datasets文件夹中
-模型存放在models文件夹中（有一个默认模型，用的是zinc包含了250k条数据，训练40轮，学习率0.0005，批次大小128，隐藏层维度128）
+环境安装查看requirements.txt文件
+
+执行app.py启动
+
+datasets--存放数据集文件（csv格式）
+models--存放模型文件，包含默认模型（使用zinc250k数据集）

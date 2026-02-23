@@ -1,0 +1,22 @@
+# 靶向化学分子智能设计系统 依赖配置
+# Python版本要求：Python 3.11.x (推荐版本 3.11.9)
+# 更高或更低版本可能会出现rdkit或PyTorch兼容性问题
+
+# 安装说明：
+# 1. 首先安装CUDA版本的PyTorch（推荐）：
+# pip install torch==2.0.1+cu117 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117
+# 
+# 2. 然后安装其他依赖：
+# pip install -r requirements.txt
+
+# Web框架
+Flask>=2.0.0
+
+# 化学信息学库
+rdkit-pypi>=2022.9.0
+
+# 数值计算库（必须小于2.0版本，避免和PyTorch兼容性问题）
+numpy<2.0.0
+
+# 图像处理依赖
+Pillow>=9.0.0

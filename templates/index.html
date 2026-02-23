@@ -32,15 +32,158 @@
                             <select id="modelSelect" class="form-select mb-2"></select>
                             <button class="btn btn-sm btn-link p-0" onclick="loadModels()">刷新列表</button>
                         </div>
-                        <div class="mb-4">
-                            <label class="form-label">优化目标设置</label>
-                            <select id="targetSelect" class="form-select">
-                                <option value="random">🎲 随机探索模式</option>
-                                <option value="high_qed">💊 目标：高类药性 (High QED)</option>
-                                <option value="high_logp">💧 目标：高脂溶性 (High LogP)</option>
-                            </select>
+                        
+                        <!-- 样本处理数量设置 -->
+                        <div class="mb-3">
+                            <label class="form-label">样本处理数量: <span id="sampleCountValue">100</span></label>
+                            <input type="range" id="sampleCountSlider" class="form-range" min="10" max="500" step="10" value="100">
+                            <div class="d-flex justify-content-between text-xs text-muted">
+                                <span>10</span>
+                                <span>500</span>
+                            </div>
                         </div>
-                        <button id="genBtn" class="btn btn-primary btn-lg w-100 py-3">执行生成</button>
+
+                        <!-- 核心药化规则 -->
+                        <div class="mb-3">
+                            <h6 class="mb-2 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#lipinskiRules" aria-expanded="false" aria-controls="lipinskiRules">
+                                <i class="bi bi-chevron-right me-2"></i>核心药化规则
+                            </h6>
+                            <div id="lipinskiRules" class="collapse mt-2">
+                                <!-- 分子量 (MW) -->
+                                <div class="mb-3">
+                                    <label class="form-label">分子量 (MW): <span id="mwMinValue">100</span> - <span id="mwMaxValue">500</span> Da</label>
+                                    <div class="row">
+                                        <div class="col">
+                                            <small class="text-muted">最小值</small>
+                                            <input type="range" id="mwMinSlider" class="form-range" min="100" max="800" step="10" value="100">
+                                        </div>
+                                        <div class="col">
+                                            <small class="text-muted">最大值</small>
+                                            <input type="range" id="mwMaxSlider" class="form-range" min="100" max="800" step="10" value="500">
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>100</span>
+                                        <span>800</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- 油水分配系数 (LogP) -->
+                                <div class="mb-3">
+                                    <label class="form-label">油水分配系数 (LogP): <span id="logpMinValue">-3.0</span> - <span id="logpMaxValue">5.0</span></label>
+                                    <div class="row">
+                                        <div class="col">
+                                            <small class="text-muted">最小值</small>
+                                            <input type="range" id="logpMinSlider" class="form-range" min="-3" max="7" step="0.1" value="-3">
+                                        </div>
+                                        <div class="col">
+                                            <small class="text-muted">最大值</small>
+                                            <input type="range" id="logpMaxSlider" class="form-range" min="-3" max="7" step="0.1" value="5.0">
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>-3.0</span>
+                                        <span>7.0</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- 氢键供体数 (HBD) -->
+                                <div class="mb-3">
+                                    <label class="form-label">氢键供体数 (HBD): <span id="hbdMinValue">0</span> - <span id="hbdMaxValue">5</span></label>
+                                    <div class="row">
+                                        <div class="col">
+                                            <small class="text-muted">最小值</small>
+                                            <input type="range" id="hbdMinSlider" class="form-range" min="0" max="12" step="1" value="0">
+                                        </div>
+                                        <div class="col">
+                                            <small class="text-muted">最大值</small>
+                                            <input type="range" id="hbdMaxSlider" class="form-range" min="0" max="12" step="1" value="5">
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>0</span>
+                                        <span>12</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- 氢键受体数 (HBA) -->
+                                <div class="mb-3">
+                                    <label class="form-label">氢键受体数 (HBA): <span id="hbaMinValue">0</span> - <span id="hbaMaxValue">10</span></label>
+                                    <div class="row">
+                                        <div class="col">
+                                            <small class="text-muted">最小值</small>
+                                            <input type="range" id="hbaMinSlider" class="form-range" min="0" max="15" step="1" value="0">
+                                        </div>
+                                        <div class="col">
+                                            <small class="text-muted">最大值</small>
+                                            <input type="range" id="hbaMaxSlider" class="form-range" min="0" max="15" step="1" value="10">
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>0</span>
+                                        <span>15</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- 可旋转键数 (RotB) -->
+                                <div class="mb-3">
+                                    <label class="form-label">可旋转键数 (RotB): <span id="rotBondsMinValue">0</span> - <span id="rotBondsMaxValue">10</span></label>
+                                    <div class="row">
+                                        <div class="col">
+                                            <small class="text-muted">最小值</small>
+                                            <input type="range" id="rotBondsMinSlider" class="form-range" min="0" max="15" step="1" value="0">
+                                        </div>
+                                        <div class="col">
+                                            <small class="text-muted">最大值</small>
+                                            <input type="range" id="rotBondsMaxSlider" class="form-range" min="0" max="15" step="1" value="10">
+                                        </div>
+                                    </div>
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>0</span>
+                                        <span>15</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 综合质量评分 -->
+                        <div class="mb-4">
+                            <h6 class="mb-2 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#qualityScores" aria-expanded="false" aria-controls="qualityScores">
+                                <i class="bi bi-chevron-right me-2"></i>综合质量评分
+                            </h6>
+                            <div id="qualityScores" class="collapse mt-2">
+                                <!-- 药物相似度 (QED) -->
+                                <div class="mb-3">
+                                    <label class="form-label">药物相似度 (QED) ≥ <span id="qedValue">0.6</span></label>
+                                    <input type="range" id="qedSlider" class="form-range" min="0" max="1" step="0.05" value="0.6">
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>0.0</span>
+                                        <span>1.0</span>
+                                    </div>
+                                </div>
+                                
+                                <!-- 合成难易度 (SA) -->
+                                <div class="mb-3">
+                                    <label class="form-label">合成难易度 (SA) ≤ <span id="saValue">4.0</span></label>
+                                    <input type="range" id="saSlider" class="form-range" min="1" max="10" step="0.1" value="4.0">
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>1.0</span>
+                                        <span>10.0</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button id="resetBtn" class="btn btn-outline-secondary py-2">恢复默认值</button>
+                            <button id="genBtn" class="btn btn-primary btn-lg py-3">执行生成</button>
+                        </div>
+                        <div id="statusText" class="text-primary mt-2"></div>
+                        <div class="mt-2">
+                            <div class="progress" style="height: 10px;">
+                                <div id="generateProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                        <div id="generateLogs" class="mt-2 p-2 bg-light rounded text-sm overflow-auto" style="max-height: 200px;"></div>
                     </div>
                 </div>
                 <div class="col-lg-8">
@@ -50,20 +193,95 @@
                             <p class="mt-3 text-muted">等待任务启动...</p>
                         </div>
                         <div id="resultDisplay" style="display:none;">
-                            <div class="row align-items-center">
-                                <div class="col-md-6 text-center border-end">
-                                    <img id="molImg" src="" alt="分子结构">
-                                    <div class="mt-3 px-3"><div id="smilesCode" class="bg-light p-2 rounded text-break small font-monospace"></div></div>
-                                </div>
-                                <div class="col-md-6 px-4">
-                                    <h6 class="mb-3 text-primary">理化性质报告</h6>
-                                    <div class="row g-3">
-                                        <div class="col-6"><div class="prop-box"><div class="prop-label">QED</div><div id="qedVal" class="prop-val">--</div></div></div>
-                                        <div class="col-6"><div class="prop-box"><div class="prop-label">LogP</div><div id="logpVal" class="prop-val">--</div></div></div>
-                                        <div class="col-6"><div class="prop-box"><div class="prop-label">MW</div><div id="mwVal" class="prop-val">--</div></div></div>
-                                        <div class="col-6"><div class="prop-box"><div class="prop-label">状态</div><div class="text-success small fw-bold mt-1">已校验</div></div></div>
+                            <div id="moleculeSwitcher" class="mt-3"></div>
+                            <div class="row g-4">
+                                <!-- 左侧：分子结构 -->
+                                <div class="col-md-5 text-center">
+                                    <div class="card p-3 h-100">
+                                        <h6 class="mb-3 text-primary">分子2D结构</h6>
+                                        <img id="molImg" src="" alt="分子结构" class="img-fluid mb-3">
+                                        <div class="mt-2">
+                                            <div class="bg-light p-2 rounded text-break small font-monospace" id="smilesCode"></div>
+                                        </div>
                                     </div>
-                                    <div class="mt-4 p-3 border-start border-4 border-primary bg-light"><small id="moreMetrics" class="text-dark"></small></div>
+                                </div>
+                                
+                                <!-- 右侧：评分展示 -->
+                                <div class="col-md-7">
+                                    <!-- 核心看板指标 -->
+                                    <div class="card p-3 mb-4">
+                                        <h6 class="mb-3 text-primary">核心质量指标</h6>
+                                        <div class="row g-3">
+                                            <div class="col-6">
+                                                <div class="d-flex align-items-center">
+                                                    <div class="rounded-circle bg-primary bg-opacity-10 p-3 me-3">
+                                                        <i class="bi bi-star-fill text-primary fs-4"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div class="text-muted small">药物相似度 (QED)</div>
+                                                        <div class="fs-4 fw-bold" id="qedVal">--</div>
+                                                        <div class="small text-muted" id="qedStars"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="col-6">
+                                                <div class="d-flex align-items-center">
+                                                    <div class="rounded-circle bg-success bg-opacity-10 p-3 me-3">
+                                                        <i class="bi bi-gear-fill text-success fs-4"></i>
+                                                    </div>
+                                                    <div>
+                                                        <div class="text-muted small">合成难度 (SA Score)</div>
+                                                        <div class="fs-4 fw-bold" id="saScoreVal">--</div>
+                                                        <div class="small" id="saTag"></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- 规则合规性检查 -->
+                                    <div class="card p-3 mb-4">
+                                        <h6 class="mb-3 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#ruleChecks" aria-expanded="false">
+                                            <i class="bi bi-chevron-right me-2"></i>
+                                            规则合规性检查
+                                            <span class="ms-auto badge" id="ruleStatusBadge"></span>
+                                        </h6>
+                                        <div id="ruleChecks" class="collapse">
+                                            <div class="mb-3">
+                                                <div class="d-flex justify-content-between mb-2">
+                                                    <span>Lipinski 五规则</span>
+                                                    <span id="lipinskiStatus"></span>
+                                                </div>
+                                                <div class="ps-3 small">
+                                                    <div id="lipinskiMwCheck"></div>
+                                                    <div id="lipinskiLogpCheck"></div>
+                                                    <div id="lipinskiHbdCheck"></div>
+                                                    <div id="lipinskiHbaCheck"></div>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div class="d-flex justify-content-between mb-2">
+                                                    <span>Veber 规则</span>
+                                                    <span id="veberStatus"></span>
+                                                </div>
+                                                <div class="ps-3 small">
+                                                    <div id="veberRotBondsCheck"></div>
+                                                    <div id="veberTpsaCheck"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- 雷达图可视化 -->
+                                    <div class="card p-3">
+                                        <h6 class="mb-3 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#radarChartSection" aria-expanded="false">
+                                            <i class="bi bi-chevron-right me-2"></i>
+                                            性质均衡性雷达图
+                                        </h6>
+                                        <div id="radarChartSection" class="collapse">
+                                            <canvas id="moleculeRadarChart" height="250"></canvas>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -128,6 +346,19 @@
         </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <script src="/static/js/main.js"></script>
+    
+    <!-- 自动消失错误提示 -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+      <div id="errorToast" class="toast align-items-center text-white bg-danger border-0" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+          <div class="toast-body" id="errorToastBody">
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+      </div>
+    </div>
 </body>
 </html>
