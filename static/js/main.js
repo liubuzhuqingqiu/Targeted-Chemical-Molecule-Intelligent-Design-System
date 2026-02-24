@@ -3,7 +3,6 @@ class MoleculeDesignPlatform {
     constructor() {
         this.pollInterval = null;
         this.displayedCount = 0; // 记录已显示的日志条数
-        this.radarChart = null; // 雷达图实例
         this.init();
     }
 
@@ -34,16 +33,16 @@ class MoleculeDesignPlatform {
     // 恢复默认值
     resetToDefaults() {
         // 分子量默认值
-        document.getElementById('mwMinSlider').value = 100;
-        document.getElementById('mwMaxSlider').value = 500;
-        document.getElementById('mwMinValue').textContent = '100';
-        document.getElementById('mwMaxValue').textContent = '500';
+        document.getElementById('mwMinSlider').value = 50;
+        document.getElementById('mwMaxSlider').value = 600;
+        document.getElementById('mwMinValue').textContent = '50';
+        document.getElementById('mwMaxValue').textContent = '600';
         
         // LogP默认值
         document.getElementById('logpMinSlider').value = -3;
-        document.getElementById('logpMaxSlider').value = 5.0;
+        document.getElementById('logpMaxSlider').value = 7;
         document.getElementById('logpMinValue').textContent = '-3.0';
-        document.getElementById('logpMaxValue').textContent = '5.0';
+        document.getElementById('logpMaxValue').textContent = '7.0';
         
         // HBD默认值
         document.getElementById('hbdMinSlider').value = 0;
@@ -64,16 +63,19 @@ class MoleculeDesignPlatform {
         document.getElementById('rotBondsMaxValue').textContent = '10';
         
         // QED默认值
-        document.getElementById('qedSlider').value = 0.6;
-        document.getElementById('qedValue').textContent = '0.6';
+        document.getElementById('qedSlider').value = 0.3;
+        document.getElementById('qedValue').textContent = '0.3';
         
         // SA默认值
-        document.getElementById('saSlider').value = 4.0;
-        document.getElementById('saValue').textContent = '4.0';
+        document.getElementById('saSlider').value = 6.0;
+        document.getElementById('saValue').textContent = '6.0';
         
         // 样本数量默认值
         document.getElementById('sampleCountSlider').value = 100;
         document.getElementById('sampleCountValue').textContent = '100';
+        document.getElementById('decodeBatchSizeSelect').value = '8';
+        document.getElementById('tanimotoSlider').value = 0.85;
+        document.getElementById('tanimotoValue').textContent = '0.85';
         
         // 显示成功提示
         this.showSuccessToast('已恢复默认参数值');
@@ -126,6 +128,20 @@ class MoleculeDesignPlatform {
             });
         }
         
+        // 模型与采样设置折叠事件
+        const genSampleSettings = document.getElementById('genSampleSettings');
+        const genSampleIcon = document.querySelector('[data-bs-target="#genSampleSettings"] i');
+        if (genSampleSettings && genSampleIcon) {
+            genSampleSettings.addEventListener('show.bs.collapse', () => {
+                genSampleIcon.classList.remove('bi-chevron-right');
+                genSampleIcon.classList.add('bi-chevron-down');
+            });
+            genSampleSettings.addEventListener('hide.bs.collapse', () => {
+                genSampleIcon.classList.remove('bi-chevron-down');
+                genSampleIcon.classList.add('bi-chevron-right');
+            });
+        }
+        
         // 综合质量评分折叠事件
         const qualityScores = document.getElementById('qualityScores');
         const qualityIcon = document.querySelector('[data-bs-target="#qualityScores"] i');
@@ -157,108 +173,6 @@ class MoleculeDesignPlatform {
                 ruleIcon.classList.add('bi-chevron-right');
             });
         }
-        
-        // 雷达图折叠事件
-        const radarChartSection = document.getElementById('radarChartSection');
-        const radarIcon = document.querySelector('[data-bs-target="#radarChartSection"] i');
-        
-        if (radarChartSection && radarIcon) {
-            radarChartSection.addEventListener('show.bs.collapse', () => {
-                radarIcon.classList.remove('bi-chevron-right');
-                radarIcon.classList.add('bi-chevron-down');
-            });
-            
-            radarChartSection.addEventListener('hide.bs.collapse', () => {
-                radarIcon.classList.remove('bi-chevron-down');
-                radarIcon.classList.add('bi-chevron-right');
-            });
-        }
-    }
-    
-    // 绘制分子性质雷达图
-    renderRadarChart(metrics) {
-        const ctx = document.getElementById('moleculeRadarChart').getContext('2d');
-        
-        // 如果已有图表实例，先销毁
-        if (this.radarChart) {
-            this.radarChart.destroy();
-        }
-        
-        // 数据归一化处理
-        const normalizedData = [
-            Math.min(metrics.mw / 600, 1),      // 分子量上限600
-            Math.min(metrics.logp / 7, 1),      // LogP上限7
-            Math.min(metrics.hbd / 10, 1),      // HBD上限10
-            Math.min(metrics.hba / 15, 1),      // HBA上限15
-            Math.min(metrics.rot_bonds / 15, 1), // 可旋转键上限15
-            Math.min(metrics.tpsa / 200, 1)      // TPSA上限200
-        ];
-        
-        this.radarChart = new Chart(ctx, {
-            type: 'radar',
-            data: {
-                labels: ['分子量 (MW)', '亲油性 (LogP)', '氢键供体 (HBD)', '氢键受体 (HBA)', '可旋转键 (RotB)', '极性表面积 (TPSA)'],
-                datasets: [{
-                    label: '分子性质',
-                    data: normalizedData,
-                    backgroundColor: 'rgba(13, 110, 253, 0.2)',
-                    borderColor: 'rgba(13, 110, 253, 0.8)',
-                    pointBackgroundColor: 'rgba(13, 110, 253, 1)',
-                    pointBorderColor: '#fff',
-                    pointHoverBackgroundColor: '#fff',
-                    pointHoverBorderColor: 'rgba(13, 110, 253, 1)'
-                }, {
-                    label: '理想范围',
-                    data: [0.83, 0.71, 0.5, 0.67, 0.67, 0.7],
-                    backgroundColor: 'rgba(25, 135, 84, 0.1)',
-                    borderColor: 'rgba(25, 135, 84, 0.5)',
-                    borderDash: [5, 5],
-                    pointRadius: 3,
-                    pointBackgroundColor: 'rgba(25, 135, 84, 1)'
-                }]
-            },
-            options: {
-                scales: {
-                    r: {
-                        beginAtZero: true,
-                        max: 1,
-                        ticks: {
-                            display: false
-                        }
-                    }
-                },
-                plugins: {
-                    legend: {
-                        position: 'bottom'
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                if (context.datasetIndex === 0) {
-                                    // 分子实际值
-                                    const labels = ['分子量: ' + metrics.mw + ' Da',
-                                                  '亲油性: ' + metrics.logp,
-                                                  '氢键供体: ' + metrics.hbd,
-                                                  '氢键受体: ' + metrics.hba,
-                                                  '可旋转键: ' + metrics.rot_bonds,
-                                                  '极性表面积: ' + metrics.tpsa + ' Å²'];
-                                    return labels[context.dataIndex];
-                                } else {
-                                    // 理想范围值
-                                    const idealLabels = ['分子量理想上限: 500 Da',
-                                                       '亲油性理想上限: 5',
-                                                       '氢键供体理想上限: 5',
-                                                       '氢键受体理想上限: 10',
-                                                       '可旋转键理想上限: 10',
-                                                       '极性表面积理想上限: 140 Å²'];
-                                    return idealLabels[context.dataIndex];
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
     }
     
     // 绑定滑块事件
@@ -391,6 +305,13 @@ class MoleculeDesignPlatform {
                 sampleCountValue.textContent = sampleCountSlider.value;
             });
         }
+        const tanimotoSlider = document.getElementById('tanimotoSlider');
+        const tanimotoValue = document.getElementById('tanimotoValue');
+        if (tanimotoSlider && tanimotoValue) {
+            tanimotoSlider.addEventListener('input', () => {
+                tanimotoValue.textContent = tanimotoSlider.value;
+            });
+        }
     }
 
     // 显示错误提示
@@ -430,7 +351,8 @@ class MoleculeDesignPlatform {
     // 开始轮询训练状态
     async startPolling() {
         const progressBar = document.getElementById('trainProgressBar');
-        const statusText = document.getElementById('statusText');
+        const statusEl = document.getElementById('trainStatusText');
+        const progressPercentEl = document.getElementById('trainProgressPercent');
         const logArea = document.getElementById('trainLogs');
         const trainBtn = document.getElementById('trainBtn');
 
@@ -440,11 +362,10 @@ class MoleculeDesignPlatform {
                 const data = await res.json();
 
                 if (data.status === "training" || data.status === "success" || data.status === "error") {
-                    // 更新进度条
-                    const progress = Math.round((data.current_epoch / data.total_epochs) * 100);
+                    const progress = data.total_epochs ? Math.round((data.current_epoch / data.total_epochs) * 100) : 0;
                     progressBar.style.width = progress + "%";
+                    if (progressPercentEl) progressPercentEl.textContent = progress + "%";
 
-                    // 增量日志显示
                     if (data.logs && data.logs.length > this.displayedCount) {
                         for (let i = this.displayedCount; i < data.logs.length; i++) {
                             const div = document.createElement('div');
@@ -452,26 +373,22 @@ class MoleculeDesignPlatform {
                             logArea.appendChild(div);
                             this.displayedCount++;
                         }
-                        // 自动滚动到底部
                         logArea.scrollTop = logArea.scrollHeight;
                     }
 
-                    // 当状态不再是 training 时恢复按钮
                     if (data.status === "success" || data.status === "error") {
                         clearInterval(this.pollInterval);
-
                         trainBtn.disabled = false;
-                        trainBtn.innerHTML = `<i class="bi bi-rocket-takeoff"></i> 启动异步训练任务`;
-
+                        trainBtn.innerHTML = `<i class="bi bi-rocket-takeoff me-2"></i>启动训练`;
                         if (data.status === "success") {
-                            statusText.innerText = "✅ 训练已成功完成";
+                            if (statusEl) statusEl.innerText = "✅ 训练已成功完成";
                             progressBar.classList.remove('progress-bar-animated');
-                            this.loadModels(); // 自动刷新模型下拉列表
+                            this.loadModels();
                         } else {
-                            statusText.innerText = "❌ 训练出现错误";
+                            if (statusEl) statusEl.innerText = "❌ 训练出现错误";
                         }
                     } else {
-                        statusText.innerText = "模型训练中...";
+                        if (statusEl) statusEl.innerText = "模型训练中...";
                     }
                 }
             } catch (e) {
@@ -487,62 +404,42 @@ class MoleculeDesignPlatform {
         // 锁定按钮
         const trainBtn = document.getElementById('trainBtn');
         trainBtn.disabled = true;
-        trainBtn.innerHTML = `<span class="spinner-border spinner-border-sm"></span> 训练任务运行中...`;
+        trainBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>训练中...`;
 
-        // 重置 UI 状态
+        // 重置 UI 状态：显示进度卡片、隐藏占位提示
         document.getElementById('trainNotify').classList.remove('d-none');
+        const idleHint = document.getElementById('trainIdleHint');
+        if (idleHint) idleHint.classList.add('d-none');
         document.getElementById('trainLogs').innerHTML = "";
+        const pct = document.getElementById('trainProgressPercent');
+        if (pct) pct.textContent = "0%";
         this.displayedCount = 0;
 
         const formData = new FormData(e.target);
         try {
-            await fetch('/start_train', {
-                method: 'POST',
-                body: formData
-            });
+            const res = await fetch('/start_train', { method: 'POST', body: formData });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error) {
+                this.showErrorToast(data.error || "启动失败，请稍后重试");
+                trainBtn.disabled = false;
+                trainBtn.innerHTML = `<i class="bi bi-rocket-takeoff me-2"></i>启动训练`;
+                return;
+            }
             this.startPolling(); // 开始监听后端 logs 列表
         } catch (e) {
-            // 使用自动消失Toast显示错误
             this.showErrorToast("启动失败，请检查后端连接");
-            // 报错时恢复按钮
             trainBtn.disabled = false;
-            trainBtn.innerHTML = `<i class="bi bi-rocket-takeoff"></i> 启动异步训练任务`;
+            trainBtn.innerHTML = `<i class="bi bi-rocket-takeoff me-2"></i>启动训练`;
         }
     }
 
     // 开始分子生成轮询
     async startGeneratePolling() {
         const genBtn = document.getElementById('genBtn');
-        const statusText = document.getElementById('statusText') || (() => {
-            // 创建状态文本元素
-            const div = document.createElement('div');
-            div.id = 'statusText';
-            div.className = 'text-primary mt-2';
-            document.querySelector('#genPanel .card').appendChild(div);
-            return div;
-        })();
-        const logArea = document.getElementById('generateLogs') || (() => {
-            // 创建日志区域元素
-            const div = document.createElement('div');
-            div.id = 'generateLogs';
-            div.className = 'mt-2 p-2 bg-light rounded text-sm overflow-auto';
-            div.style.maxHeight = '200px';
-            document.querySelector('#genPanel .card').appendChild(div);
-            return div;
-        })();
-        const progressBar = document.getElementById('generateProgressBar') || (() => {
-            // 创建进度条元素
-            const div = document.createElement('div');
-            div.className = 'mt-2';
-            div.innerHTML = `
-                <div class="progress" style="height: 10px;">
-                    <div id="generateProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%;"></div>
-                </div>
-            `;
-            document.querySelector('#genPanel .card').appendChild(div);
-            return document.getElementById('generateProgressBar');
-        })();
-        
+        const statusEl = document.getElementById('genStatusText');
+        const progressPercentEl = document.getElementById('genProgressPercent');
+        const logArea = document.getElementById('generateLogs');
+        const progressBar = document.getElementById('generateProgressBar');
         let displayedCount = 0;
 
         this.pollInterval = setInterval(async () => {
@@ -551,11 +448,11 @@ class MoleculeDesignPlatform {
                 const data = await res.json();
 
                 if (data.status === "generating" || data.status === "success" || data.status === "error") {
-                    // 更新进度条
-                    const progress = Math.round((data.current_sample / data.total_samples) * 100);
-                    progressBar.style.width = progress + "%";
+                    const total = data.total_samples || 1;
+                    const progress = Math.round((data.current_sample / total) * 100);
+                    if (progressBar) progressBar.style.width = progress + "%";
+                    if (progressPercentEl) progressPercentEl.textContent = progress + "%";
 
-                    // 增量日志显示
                     if (data.logs && data.logs.length > displayedCount) {
                         for (let i = displayedCount; i < data.logs.length; i++) {
                             const div = document.createElement('div');
@@ -563,39 +460,40 @@ class MoleculeDesignPlatform {
                             logArea.appendChild(div);
                             displayedCount++;
                         }
-                        // 自动滚动到底部
                         logArea.scrollTop = logArea.scrollHeight;
                     }
 
-                    // 当状态不再是 generating 时恢复按钮
                     if (data.status === "success" || data.status === "error") {
                         clearInterval(this.pollInterval);
-
                         genBtn.disabled = false;
                         genBtn.innerText = "执行生成";
-
                         if (data.status === "success") {
-                            statusText.innerText = "✅ 分子生成已成功完成";
-                            progressBar.classList.remove('progress-bar-animated');
-                            
-                            // 显示结果
+                            if (statusEl) {
+                                statusEl.innerText = "✅ 分子生成已成功完成";
+                                statusEl.classList.remove('d-none');
+                            }
+                            if (progressBar) progressBar.classList.remove('progress-bar-animated');
+                            const emptyEl = document.getElementById('emptyState');
+                            const resultEl = document.getElementById('resultDisplay');
                             if (data.valid_molecules && data.valid_molecules.length > 0) {
-                                document.getElementById('emptyState').style.display = 'none';
-                                document.getElementById('resultDisplay').style.display = 'block';
-                                
-                                // 默认显示最佳分子
+                                if (emptyEl) emptyEl.style.display = 'none';
+                                if (resultEl) resultEl.style.display = 'block';
                                 const bestMol = data.best_mol || data.valid_molecules[0];
                                 this.displayMolecule(bestMol);
-                                
-                                // 添加分子切换功能
                                 this.addMoleculeSwitcher(data.valid_molecules);
+                            } else {
+                                if (emptyEl) {
+                                    emptyEl.style.display = 'block';
+                                    emptyEl.innerHTML = '<i class="bi bi-info-circle display-6 text-secondary"></i><p class="mt-3 text-muted">本次未生成满足条件的分子，可放宽约束后重试。</p>';
+                                }
+                                if (resultEl) resultEl.style.display = 'none';
                             }
                         } else {
-                            statusText.innerText = "❌ 分子生成出现错误";
+                            if (statusEl) statusEl.innerText = "❌ 分子生成出现错误";
                             this.showErrorToast(data.error);
                         }
                     } else {
-                        statusText.innerText = `分子生成中... 处理样本 ${data.current_sample}/${data.total_samples}`;
+                        if (statusEl) statusEl.innerText = `生成中 ${data.current_sample}/${data.total_samples}`;
                     }
                 }
             } catch (e) {
@@ -608,7 +506,14 @@ class MoleculeDesignPlatform {
     displayMolecule(mol) {
         document.getElementById('molImg').src = 'data:image/png;base64,' + mol.image;
         document.getElementById('smilesCode').innerText = mol.smiles;
-        
+        const relaxedHint = document.getElementById('relaxedConstraintHint');
+        if (relaxedHint) {
+            if (mol.relaxed) {
+                relaxedHint.classList.remove('d-none');
+            } else {
+                relaxedHint.classList.add('d-none');
+            }
+        }
         // 核心指标展示
         const metrics = mol.metrics;
         
@@ -629,7 +534,21 @@ class MoleculeDesignPlatform {
         }
         document.getElementById('saTag').innerHTML = saTag;
         
-        // 基础属性已经移到规则检查和雷达图中展示
+        // ADMET 评估展示
+        const logS = metrics.log_solubility != null ? metrics.log_solubility : '—';
+        const solLabel = metrics.solubility_label || '—';
+        const perm = metrics.permeability || '—';
+        const bbb = metrics.bbb_potential || '—';
+        const mr = metrics.mol_refractivity != null ? metrics.mol_refractivity : '—';
+        const riskCount = metrics.risk_substructure_count != null ? metrics.risk_substructure_count : '—';
+        const riskSummary = metrics.risk_summary || '—';
+        document.getElementById('admetLogS').innerText = logS;
+        document.getElementById('admetSolubilityLabel').innerText = typeof solLabel === 'string' ? solLabel : '—';
+        document.getElementById('admetPermeability').innerText = perm;
+        document.getElementById('admetBBB').innerText = bbb;
+        document.getElementById('admetMR').innerText = mr;
+        document.getElementById('admetRiskCount').innerText = riskCount;
+        document.getElementById('admetRiskSummary').innerText = riskSummary;
         
         // Lipinski规则检查
         const totalViolations = metrics.lipinski_ro5_violations + metrics.veber_violations;
@@ -672,51 +591,91 @@ class MoleculeDesignPlatform {
         document.getElementById('veberTpsaCheck').innerHTML = veberChecks.tpsa 
             ? `<span class="text-success">✓ 极性表面积 (TPSA): ${metrics.tpsa} ≤ 140 Å²</span>`
             : `<span class="text-danger">✗ 极性表面积 (TPSA): ${metrics.tpsa} > 140 Å²</span>`;
-        
-        // 绘制雷达图
-        this.renderRadarChart(metrics);
     }
 
-    // 添加分子切换功能
+    // 添加分子切换功能（下拉 + 上一个/下一个）
     addMoleculeSwitcher(molecules) {
         const switcherContainer = document.getElementById('moleculeSwitcher') || (() => {
-            // 创建分子切换器容器
             const div = document.createElement('div');
             div.id = 'moleculeSwitcher';
             div.className = 'mt-3';
             document.querySelector('#resultDisplay').insertBefore(div, document.querySelector('#resultDisplay > div'));
             return div;
         })();
-        
-        // 清空切换器内容
-        switcherContainer.innerHTML = `
-            <h6 class="mb-2 text-primary">生成的分子列表</h6>
-            <div class="d-flex flex-wrap gap-2">
-                ${molecules.map((mol, index) => `
-                    <button class="btn btn-sm ${index === 0 ? 'btn-primary' : 'btn-outline-primary'}" onclick="window.moleculeApp.switchMolecule(${index})">
-                        分子 ${index + 1} (分数: ${mol.score.toFixed(2)})
-                    </button>
-                `).join('')}
-            </div>
-        `;
-        
-        // 保存分子列表到实例
+
+        const select = document.createElement('select');
+        select.id = 'moleculeSelect';
+        select.className = 'form-select';
+        select.innerHTML = molecules.map((mol, index) => {
+            const score = mol.score != null ? mol.score.toFixed(2) : '—';
+            return `<option value="${index}">分子 ${index + 1} (分数: ${score})</option>`;
+        }).join('');
+        select.addEventListener('change', () => {
+            const index = parseInt(select.value, 10);
+            if (!isNaN(index) && this.generatedMolecules && this.generatedMolecules[index]) {
+                this.displayMolecule(this.generatedMolecules[index]);
+                this.updatePrevNextButtons();
+            }
+        });
+
+        const prevBtn = document.createElement('button');
+        prevBtn.type = 'button';
+        prevBtn.className = 'btn btn-sm btn-outline-primary';
+        prevBtn.textContent = '上一个';
+        prevBtn.id = 'moleculePrevBtn';
+        prevBtn.addEventListener('click', () => {
+            const sel = document.getElementById('moleculeSelect');
+            if (!sel || !this.generatedMolecules || this.generatedMolecules.length === 0) return;
+            const idx = parseInt(sel.value, 10);
+            if (idx > 0) this.switchMolecule(idx - 1);
+            this.updatePrevNextButtons();
+        });
+
+        const nextBtn = document.createElement('button');
+        nextBtn.type = 'button';
+        nextBtn.className = 'btn btn-sm btn-outline-primary';
+        nextBtn.textContent = '下一个';
+        nextBtn.id = 'moleculeNextBtn';
+        nextBtn.addEventListener('click', () => {
+            const sel = document.getElementById('moleculeSelect');
+            if (!sel || !this.generatedMolecules || this.generatedMolecules.length === 0) return;
+            const idx = parseInt(sel.value, 10);
+            if (idx < this.generatedMolecules.length - 1) this.switchMolecule(idx + 1);
+            this.updatePrevNextButtons();
+        });
+
+        switcherContainer.innerHTML = '';
+        const label = document.createElement('label');
+        label.className = 'form-label text-primary mb-1';
+        label.textContent = '切换分子 (按分数从高到低)';
+        switcherContainer.appendChild(label);
+        const row = document.createElement('div');
+        row.className = 'd-flex align-items-center gap-2 flex-wrap';
+        row.appendChild(select);
+        row.appendChild(prevBtn);
+        row.appendChild(nextBtn);
+        switcherContainer.appendChild(row);
         this.generatedMolecules = molecules;
+        this.updatePrevNextButtons();
     }
 
-    // 切换分子
+    updatePrevNextButtons() {
+        const select = document.getElementById('moleculeSelect');
+        const prevBtn = document.getElementById('moleculePrevBtn');
+        const nextBtn = document.getElementById('moleculeNextBtn');
+        if (!select || !prevBtn || !nextBtn || !this.generatedMolecules || this.generatedMolecules.length === 0) return;
+        const idx = parseInt(select.value, 10);
+        const total = this.generatedMolecules.length;
+        prevBtn.disabled = idx <= 0;
+        nextBtn.disabled = idx >= total - 1;
+    }
+
+    // 切换分子（供外部或下拉/按钮调用）
     switchMolecule(index) {
         if (this.generatedMolecules && this.generatedMolecules[index]) {
             this.displayMolecule(this.generatedMolecules[index]);
-            // 更新按钮状态
-            const buttons = document.querySelectorAll('#moleculeSwitcher button');
-            buttons.forEach((btn, i) => {
-                if (i === index) {
-                    btn.className = 'btn btn-sm btn-primary';
-                } else {
-                    btn.className = 'btn btn-sm btn-outline-primary';
-                }
-            });
+            const select = document.getElementById('moleculeSelect');
+            if (select) select.value = String(index);
         }
     }
 
@@ -725,6 +684,14 @@ class MoleculeDesignPlatform {
         const genBtn = document.getElementById('genBtn');
         genBtn.disabled = true;
         genBtn.innerText = "生成中...";
+        const genStatus = document.getElementById('genStatusText');
+        const genPct = document.getElementById('genProgressPercent');
+        if (genStatus) genStatus.innerText = "任务已提交，等待进度...";
+        if (genPct) genPct.textContent = "0%";
+        const gp = document.getElementById('generateProgressBar');
+        if (gp) gp.style.width = "0%";
+        const genLogs = document.getElementById('generateLogs');
+        if (genLogs) genLogs.innerHTML = "";
         
         try {
             const res = await fetch('/generate', {
@@ -733,6 +700,8 @@ class MoleculeDesignPlatform {
                 body: JSON.stringify({
                     model_file: document.getElementById('modelSelect').value,
                     sample_count: parseInt(document.getElementById('sampleCountSlider').value),
+                    decode_batch_size: parseInt(document.getElementById('decodeBatchSizeSelect').value),
+                    tanimoto_threshold: parseFloat(document.getElementById('tanimotoSlider').value),
                     // 分子约束参数
                     constraints: {
                         // 使用滑块值作为约束参数
@@ -761,17 +730,14 @@ class MoleculeDesignPlatform {
                     }
                 })
             });
-            const data = await res.json();
-            
-            if (!data.error) {
-                // 无论响应如何，只要没有错误就开始轮询生成状态
-                this.startGeneratePolling();
-            } else {
-                // 使用自动消失Toast显示错误
-                this.showErrorToast(data.error);
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.error) {
+                this.showErrorToast(data.error || "生成请求失败，请稍后重试");
                 genBtn.disabled = false;
                 genBtn.innerText = "执行生成";
+                return;
             }
+            this.startGeneratePolling();
         } catch (e) {
             console.error("生成请求失败:", e);
             this.showErrorToast("生成请求失败: " + e.message);

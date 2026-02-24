@@ -26,14 +26,15 @@
             <div class="row g-4">
                 <div class="col-lg-4">
                     <div class="card p-4">
-                        <h5 class="mb-4">生成配置</h5>
+                        <div class="d-flex align-items-center justify-content-between mb-4">
+                            <h5 class="mb-0">生成配置</h5>
+                            <button id="resetBtn" class="btn btn-sm btn-outline-secondary py-1 px-2" style="font-size: 0.8rem;">默认</button>
+                        </div>
+                        <!-- 选择模型 + 样本数量放在最上面 -->
                         <div class="mb-3">
                             <label class="form-label">选择生成模型</label>
                             <select id="modelSelect" class="form-select mb-2"></select>
-                            <button class="btn btn-sm btn-link p-0" onclick="loadModels()">刷新列表</button>
                         </div>
-                        
-                        <!-- 样本处理数量设置 -->
                         <div class="mb-3">
                             <label class="form-label">样本处理数量: <span id="sampleCountValue">100</span></label>
                             <input type="range" id="sampleCountSlider" class="form-range" min="10" max="500" step="10" value="100">
@@ -42,8 +43,47 @@
                                 <span>500</span>
                             </div>
                         </div>
+                        <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
+                            <button id="genBtn" class="btn btn-primary btn-lg py-3 flex-grow-1">执行生成</button>
+                        </div>
+                        <div class="gen-process-section mb-4 pb-3 border-bottom">
+                            <div class="d-flex justify-content-between small text-muted mb-1">
+                                <span>任务进度</span>
+                                <span id="genProgressPercent">0%</span>
+                            </div>
+                            <div class="progress process-progress mb-2">
+                                <div id="generateProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 0%;"></div>
+                            </div>
+                            <div id="genStatusText" class="text-primary small mb-2 d-none"></div>
+                            <div id="generateLogs" class="log-console log-console-gen mt-2"></div>
+                        </div>
 
-                        <!-- 核心药化规则 -->
+                        <!-- 折叠 1：综合质量评分（最上） -->
+                        <div class="mb-3">
+                            <h6 class="mb-2 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#qualityScores" aria-expanded="false" aria-controls="qualityScores">
+                                <i class="bi bi-chevron-right me-2"></i>综合质量评分
+                            </h6>
+                            <div id="qualityScores" class="collapse mt-2">
+                                <div class="mb-3">
+                                    <label class="form-label">药物相似度 (QED) ≥ <span id="qedValue">0.3</span></label>
+                                    <input type="range" id="qedSlider" class="form-range" min="0" max="1" step="0.05" value="0.3">
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>0.0</span>
+                                        <span>1.0</span>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">合成难易度 (SA) ≤ <span id="saValue">6.0</span></label>
+                                    <input type="range" id="saSlider" class="form-range" min="1" max="10" step="0.1" value="6.0">
+                                    <div class="d-flex justify-content-between text-xs text-muted">
+                                        <span>1.0</span>
+                                        <span>10.0</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 折叠 2：核心药化规则 -->
                         <div class="mb-3">
                             <h6 class="mb-2 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#lipinskiRules" aria-expanded="false" aria-controls="lipinskiRules">
                                 <i class="bi bi-chevron-right me-2"></i>核心药化规则
@@ -51,15 +91,15 @@
                             <div id="lipinskiRules" class="collapse mt-2">
                                 <!-- 分子量 (MW) -->
                                 <div class="mb-3">
-                                    <label class="form-label">分子量 (MW): <span id="mwMinValue">100</span> - <span id="mwMaxValue">500</span> Da</label>
+                                    <label class="form-label">分子量 (MW): <span id="mwMinValue">50</span> - <span id="mwMaxValue">600</span> Da</label>
                                     <div class="row">
                                         <div class="col">
                                             <small class="text-muted">最小值</small>
-                                            <input type="range" id="mwMinSlider" class="form-range" min="100" max="800" step="10" value="100">
+                                            <input type="range" id="mwMinSlider" class="form-range" min="50" max="800" step="10" value="50">
                                         </div>
                                         <div class="col">
                                             <small class="text-muted">最大值</small>
-                                            <input type="range" id="mwMaxSlider" class="form-range" min="100" max="800" step="10" value="500">
+                                            <input type="range" id="mwMaxSlider" class="form-range" min="100" max="800" step="10" value="600">
                                         </div>
                                     </div>
                                     <div class="d-flex justify-content-between text-xs text-muted">
@@ -70,7 +110,7 @@
                                 
                                 <!-- 油水分配系数 (LogP) -->
                                 <div class="mb-3">
-                                    <label class="form-label">油水分配系数 (LogP): <span id="logpMinValue">-3.0</span> - <span id="logpMaxValue">5.0</span></label>
+                                    <label class="form-label">油水分配系数 (LogP): <span id="logpMinValue">-3.0</span> - <span id="logpMaxValue">7.0</span></label>
                                     <div class="row">
                                         <div class="col">
                                             <small class="text-muted">最小值</small>
@@ -78,7 +118,7 @@
                                         </div>
                                         <div class="col">
                                             <small class="text-muted">最大值</small>
-                                            <input type="range" id="logpMaxSlider" class="form-range" min="-3" max="7" step="0.1" value="5.0">
+                                            <input type="range" id="logpMaxSlider" class="form-range" min="-3" max="7" step="0.1" value="7">
                                         </div>
                                     </div>
                                     <div class="d-flex justify-content-between text-xs text-muted">
@@ -145,45 +185,29 @@
                                 </div>
                             </div>
                         </div>
-                        
-                        <!-- 综合质量评分 -->
+
+                        <!-- 折叠 3：采样与去重（最下，仅每轮解码数 + Tanimoto） -->
                         <div class="mb-4">
-                            <h6 class="mb-2 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#qualityScores" aria-expanded="false" aria-controls="qualityScores">
-                                <i class="bi bi-chevron-right me-2"></i>综合质量评分
+                            <h6 class="mb-2 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#genSampleSettings" aria-expanded="false" aria-controls="genSampleSettings">
+                                <i class="bi bi-chevron-right me-2"></i>采样与去重
                             </h6>
-                            <div id="qualityScores" class="collapse mt-2">
-                                <!-- 药物相似度 (QED) -->
+                            <div id="genSampleSettings" class="collapse mt-2">
                                 <div class="mb-3">
-                                    <label class="form-label">药物相似度 (QED) ≥ <span id="qedValue">0.6</span></label>
-                                    <input type="range" id="qedSlider" class="form-range" min="0" max="1" step="0.05" value="0.6">
-                                    <div class="d-flex justify-content-between text-xs text-muted">
-                                        <span>0.0</span>
-                                        <span>1.0</span>
-                                    </div>
+                                    <label class="form-label">每轮解码数</label>
+                                    <select id="decodeBatchSizeSelect" class="form-select">
+                                        <option value="4">4</option>
+                                        <option value="8" selected>8</option>
+                                        <option value="16">16</option>
+                                    </select>
+                                    <div class="form-text small">每轮采样的 z 数量，越大单轮产出越多</div>
                                 </div>
-                                
-                                <!-- 合成难易度 (SA) -->
                                 <div class="mb-3">
-                                    <label class="form-label">合成难易度 (SA) ≤ <span id="saValue">4.0</span></label>
-                                    <input type="range" id="saSlider" class="form-range" min="1" max="10" step="0.1" value="4.0">
-                                    <div class="d-flex justify-content-between text-xs text-muted">
-                                        <span>1.0</span>
-                                        <span>10.0</span>
-                                    </div>
+                                    <label class="form-label">Tanimoto 去重阈值: <span id="tanimotoValue">0.85</span></label>
+                                    <input type="range" id="tanimotoSlider" class="form-range" min="0.70" max="0.95" step="0.05" value="0.85">
+                                    <div class="form-text small">相似度高于此值的分子只保留一个</div>
                                 </div>
                             </div>
                         </div>
-                        <div class="d-grid gap-2">
-                            <button id="resetBtn" class="btn btn-outline-secondary py-2">恢复默认值</button>
-                            <button id="genBtn" class="btn btn-primary btn-lg py-3">执行生成</button>
-                        </div>
-                        <div id="statusText" class="text-primary mt-2"></div>
-                        <div class="mt-2">
-                            <div class="progress" style="height: 10px;">
-                                <div id="generateProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%;"></div>
-                            </div>
-                        </div>
-                        <div id="generateLogs" class="mt-2 p-2 bg-light rounded text-sm overflow-auto" style="max-height: 200px;"></div>
                     </div>
                 </div>
                 <div class="col-lg-8">
@@ -203,6 +227,7 @@
                                         <div class="mt-2">
                                             <div class="bg-light p-2 rounded text-break small font-monospace" id="smilesCode"></div>
                                         </div>
+                                        <div id="relaxedConstraintHint" class="mt-2 small text-warning d-none"><i class="bi bi-exclamation-triangle"></i> 未满足当前约束，仅供参考</div>
                                     </div>
                                 </div>
                                 
@@ -239,6 +264,41 @@
                                         </div>
                                     </div>
                                     
+                                    <!-- ADMET 评估 -->
+                                    <div class="card p-3 mb-4">
+                                        <h6 class="mb-3 text-primary">ADMET 评估</h6>
+                                        <div class="row g-2 g-md-3 small">
+                                            <div class="col-6 col-md-4">
+                                                <div class="text-muted">吸收 · 水溶性 (ESOL)</div>
+                                                <div class="fw-bold" id="admetLogS">—</div>
+                                                <div class="text-muted" id="admetSolubilityLabel">—</div>
+                                            </div>
+                                            <div class="col-6 col-md-4">
+                                                <div class="text-muted">吸收 · 渗透性倾向</div>
+                                                <div class="fw-bold" id="admetPermeability">—</div>
+                                                <div class="text-muted">口服吸收参考</div>
+                                            </div>
+                                            <div class="col-6 col-md-4">
+                                                <div class="text-muted">分布 · 血脑屏障</div>
+                                                <div class="fw-bold" id="admetBBB">—</div>
+                                                <div class="text-muted">BBB 透过潜力</div>
+                                            </div>
+                                            <div class="col-6 col-md-4">
+                                                <div class="text-muted">分布 · 分子折射率 (MR)</div>
+                                                <div class="fw-bold" id="admetMR">—</div>
+                                            </div>
+                                            <div class="col-6 col-md-4">
+                                                <div class="text-muted">毒性 · 警示子结构数</div>
+                                                <div class="fw-bold" id="admetRiskCount">—</div>
+                                                <div class="text-muted">越少越好</div>
+                                            </div>
+                                            <div class="col-12 col-md-4">
+                                                <div class="text-muted">毒性 · 警示类型</div>
+                                                <div class="fw-bold" id="admetRiskSummary">—</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
                                     <!-- 规则合规性检查 -->
                                     <div class="card p-3 mb-4">
                                         <h6 class="mb-3 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#ruleChecks" aria-expanded="false">
@@ -271,17 +331,6 @@
                                             </div>
                                         </div>
                                     </div>
-                                    
-                                    <!-- 雷达图可视化 -->
-                                    <div class="card p-3">
-                                        <h6 class="mb-3 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#radarChartSection" aria-expanded="false">
-                                            <i class="bi bi-chevron-right me-2"></i>
-                                            性质均衡性雷达图
-                                        </h6>
-                                        <div id="radarChartSection" class="collapse">
-                                            <canvas id="moleculeRadarChart" height="250"></canvas>
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -292,62 +341,100 @@
 
         <!-- 模型训练面板 -->
         <section id="trainPanel" style="display:none;">
-            <div class="card p-4 mx-auto" style="max-width: 800px;">
-                <h4 class="mb-4 text-primary"><i class="bi bi-gear-fill"></i> 模型训练配置中心</h4>
-                <form id="trainForm">
-                    <div class="row g-3">
-                        <div class="col-12">
-                            <label class="form-label fw-bold">1. 自定义模型名称</label>
-                            <input type="text" name="model_name" class="form-control" placeholder="例如: my_vae_model" required>
+            <div class="train-layout">
+                <!-- 左侧：配置表单 -->
+                <div class="card train-config-card p-4">
+                    <h4 class="mb-4 text-primary"><i class="bi bi-gear-fill me-2"></i>训练配置</h4>
+                    <form id="trainForm">
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label class="form-label fw-bold">模型名称</label>
+                                <input type="text" name="model_name" class="form-control" placeholder="例如: my_vae_model" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">训练轮次 (Epochs)</label>
+                                <input type="number" name="epochs" class="form-control" value="10" min="1">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">学习率 (LR)</label>
+                                <input type="number" name="lr" class="form-control" value="0.001" step="0.0001" min="0" max="0.1" placeholder="0.0005">
+                                <div class="form-text small">建议 0.0001 - 0.01</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">批次大小</label>
+                                <input type="number" name="batch_size" class="form-control" value="32" min="1">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">隐藏层维度</label>
+                                <select name="hidden_dim" class="form-select">
+                                    <option value="32">32</option>
+                                    <option value="64" selected>64</option>
+                                    <option value="128">128</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">早停耐心 (Patience)</label>
+                                <input type="number" name="patience" class="form-control" value="10" min="1" max="50">
+                                <div class="form-text small">验证损失连续 N 轮不降则停止</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">验证集比例</label>
+                                <input type="number" name="validation_split" class="form-control" value="0.1" step="0.05" min="0" max="0.5">
+                                <div class="form-text small">0.1 = 10% 用于验证</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">潜在空间维度</label>
+                                <select name="latent_dim" class="form-select">
+                                    <option value="16">16</option>
+                                    <option value="32" selected>32</option>
+                                    <option value="64">64</option>
+                                </select>
+                                <div class="form-text small">潜向量 z 的维度</div>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fw-bold">数据集 (.smi)</label>
+                                <input type="file" name="dataset" class="form-control" accept=".smi,.txt" required>
+                            </div>
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">2. 训练轮次 (Epochs)</label>
-                            <input type="number" name="epochs" class="form-control" value="10">
+                        <button type="submit" id="trainBtn" class="btn btn-success btn-lg w-100 mt-4 py-3">
+                            <i class="bi bi-rocket-takeoff me-2"></i>启动训练
+                        </button>
+                    </form>
+                </div>
+                <!-- 右侧：训练进度卡片 -->
+                <div class="card train-process-card p-0 overflow-hidden">
+                    <div class="card-header process-card-header py-3 px-4">
+                        <h5 class="mb-0 text-white"><i class="bi bi-activity me-2"></i>训练进度</h5>
+                    </div>
+                    <div class="card-body p-4">
+                        <div id="trainNotify" class="d-none">
+                            <div class="process-status-row mb-3">
+                                <span class="text-muted small">当前状态</span>
+                                <strong id="trainStatusText" class="text-primary d-block mt-1">准备中...</strong>
+                            </div>
+                            <div class="mb-2">
+                                <div class="d-flex justify-content-between small text-muted mb-1">
+                                    <span>训练进度</span>
+                                    <span id="trainProgressPercent">0%</span>
+                                </div>
+                                <div class="progress process-progress">
+                                    <div id="trainProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%;"></div>
+                                </div>
+                            </div>
+                            <label class="form-label small text-muted mt-3 mb-2">运行日志</label>
+                            <div id="trainLogs" class="log-console log-console-train"></div>
                         </div>
-                      <div class="col-md-6">
-    <label class="form-label fw-bold">3. 学习率 (LR)</label>
-    <input type="number" name="lr" class="form-control"
-           value="0.001" step="0.0001" min="0" max="0.1"
-           placeholder="例如: 0.0005">
-    <div class="form-text">建议范围: 0.0001 - 0.01</div>
-</div>
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">4. 批次大小 (Batch Size)</label>
-                            <input type="number" name="batch_size" class="form-control" value="32">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">5. 隐藏层维度</label>
-                            <select name="hidden_dim" class="form-select">
-                                <option value="32">32</option>
-                                <option value="64" selected>64</option>
-                                <option value="128">128</option>
-                            </select>
-                        </div>
-                        <div class="col-12">
-                            <label class="form-label fw-bold">6. 上传数据集 (.smi)</label>
-                            <input type="file" name="dataset" class="form-control" required>
+                        <div id="trainIdleHint" class="text-center py-5 text-muted">
+                            <i class="bi bi-hourglass-split display-4"></i>
+                            <p class="mt-3 mb-0">提交训练后将在此显示进度与日志</p>
                         </div>
                     </div>
-                    <button type="submit" id="trainBtn" class="btn btn-success btn-lg w-100 mt-4 py-3">
-                        <i class="bi bi-rocket-takeoff"></i> 启动异步训练任务
-                    </button>
-                </form>
-
-                <div id="trainNotify" class="mt-4 d-none">
-                    <div class="d-flex justify-content-between">
-                        <strong id="statusText" class="text-primary">准备中...</strong>
-                    </div>
-                    <div class="progress mt-2" style="height: 10px;">
-                        <div id="trainProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-success" style="width: 0%;"></div>
-                    </div>
-                    <div id="trainLogs"></div>
                 </div>
             </div>
         </section>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <script src="/static/js/main.js"></script>
     
     <!-- 自动消失错误提示 -->

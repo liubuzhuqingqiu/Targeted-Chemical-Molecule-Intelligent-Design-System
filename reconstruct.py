@@ -5,6 +5,7 @@ from rdkit import RDLogger
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem import rdMolDescriptors
 from model import MoleculeVAE
+from admet import admet_predict
 from config import MODEL_DIR, DEFAULT_MODEL_NAME, DEFAULT_HIDDEN_DIM, LATENT_DIM, DEFAULT_GENERATE_ATTEMPTS, DEFAULT_GENERATE_BATCH_SIZE, get_device
 from atom_mapping import IDX_TO_ATOM, ATOM_VALENCY_LIMIT
 
@@ -57,6 +58,8 @@ def evaluate_molecule(smiles):
         if not veber_checks['rot_bonds']: veber_violations += 1
         if not veber_checks['tpsa']: veber_violations += 1
 
+        # ADMET 评估：溶解度（ESOL）、警示子结构
+        admet = admet_predict(mol)
         return {
             "qed": round(qed_score, 3),
             "logp": round(logp_score, 3),
@@ -73,9 +76,16 @@ def evaluate_molecule(smiles):
             "lipinski_checks": lipinski_checks,
             "veber_violations": veber_violations,
             "veber_checks": veber_checks,
-            "valid": "通过校验"
+            "valid": "通过校验",
+            "log_solubility": admet.get("log_solubility"),
+            "solubility_label": admet.get("solubility_label", "—"),
+            "permeability": admet.get("permeability", "—"),
+            "bbb_potential": admet.get("bbb_potential", "—"),
+            "mol_refractivity": admet.get("mol_refractivity"),
+            "risk_substructure_count": admet.get("risk_substructure_count", 0),
+            "risk_summary": admet.get("risk_summary", "—"),
         }
-    except:
+    except Exception:
         return None
 
 RDLogger.DisableLog('rdApp.*')
@@ -118,13 +128,20 @@ def check_molecule_constraints(smiles):
         return False, f"检查失败: {str(e)}"
 
 
+# 生成时解码的最大节点数：与模型容量一致，但不超过此上限（避免过大分子难以成键）
+MAX_DECODE_NODES = 30
+
+
 def logits_to_smiles(atom_logits, edge_logits, strict=False):
     batch_size = atom_logits.size(0)
     smiles_list = []
-    
+    model_max_nodes = atom_logits.size(1)
+    max_actual_nodes = min(model_max_nodes, MAX_DECODE_NODES)
+
     for batch_idx in range(batch_size):
         mol = Chem.RWMol()
-        temperature = 0.6 if strict else 0.3
+        # 温度略高一点有利于解码出更多样、有时更易成键的结构（过小易塌缩为全 C/无键）
+        temperature = 0.6 if strict else 0.5
         atom_probs = torch.softmax(atom_logits[batch_idx] / temperature, dim=-1)
         
         atom_probs /= atom_probs.sum(dim=-1, keepdim=True)
@@ -134,7 +151,6 @@ def logits_to_smiles(atom_logits, edge_logits, strict=False):
         else:
             atom_types = torch.argmax(atom_probs, dim=-1)
         
-        max_actual_nodes = min(15, atom_types.shape[0])
         atom_types = atom_types[:max_actual_nodes]
         
         if torch.all(atom_types == 0):
@@ -159,7 +175,7 @@ def logits_to_smiles(atom_logits, edge_logits, strict=False):
             except:
                 continue
         
-        if len(added_atoms) < 3 or len(added_atoms) > 15:
+        if len(added_atoms) < 3 or len(added_atoms) > max_actual_nodes:
             smiles_list.append(None)
             continue
 

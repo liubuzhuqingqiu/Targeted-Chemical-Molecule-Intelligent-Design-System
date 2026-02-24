@@ -34,11 +34,11 @@ DEFAULT_GENERATE_BATCH_SIZE = 1
 QED_THRESHOLD = 0.6
 LOGP_THRESHOLD = 5.0
 
-MW_MIN = 100
+MW_MIN = 50
 MW_MAX = 600
 
-LOGP_MIN = -2
-LOGP_MAX = 6
+LOGP_MIN = -3
+LOGP_MAX = 7
 
 HBD_MAX = 5
 
@@ -46,9 +46,8 @@ HBA_MAX = 10
 
 ROT_BONDS_MAX = 10
 
-QED_MIN = 0.6
-
-SA_SCORE_MAX = 4.0
+QED_MIN = 0.3
+SA_SCORE_MAX = 6.0
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
