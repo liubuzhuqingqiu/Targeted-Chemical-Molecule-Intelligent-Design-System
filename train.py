@@ -1,127 +1,73 @@
 import torch
+import torch.nn.functional as F
 import os
 from model import MoleculeVAE
 from molecule_processor import smiles_to_graph
 from torch_geometric.loader import DataLoader
-from config import DEFAULT_EPOCHS, DEFAULT_LR, DEFAULT_BATCH_SIZE, DEFAULT_HIDDEN_DIM, get_device
+from torch_geometric.utils import to_dense_batch, to_dense_adj
+from config import NUM_ATOM_TYPES, get_device
 
 
-def vae_loss(atom_logits, edge_logits, mu, logvar, properties_pred, properties_true, batch,
-             current_batch_max_nodes, beta=1.0, all_properties=None, property_weights=None):
-    from torch_geometric.utils import to_dense_batch, to_dense_adj
-    from atom_mapping import NUM_ATOM_TYPES
-    import torch.nn.functional as F
-    
+def vae_loss(atom_logits, edge_logits, mu, logvar, properties_pred, properties_true, batch, beta=1.0):
+    """
+    VAE 总损失 = 原子重构 + 3×键重构 + β×KL散度 + 0.3×属性预测
+
+    各项含义：
+      - 原子/键重构损失：衡量解码器还原分子结构的准确度
+      - KL 散度：约束潜在空间接近标准正态分布，保证采样质量
+      - 属性预测损失：让潜在空间编码分子性质信息，支持性质导向生成
+    """
+
     batch_size = mu.shape[0]
-    
-    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    free_bits = 1.0
-    kl_loss = torch.max(kl_loss, torch.tensor(free_bits * batch_size, device=mu.device))
 
-    # 性质损失权重：如未传入，则退化为全 1；否则确保在当前设备上
-    if property_weights is None:
-        prop_w = torch.ones(1, properties_pred.shape[1], device=mu.device)
-    else:
-        prop_w = property_weights.to(mu.device).view(1, -1)
-    
+    # KL 散度
+    kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+    # 属性预测损失（均方误差）
     prop_loss = torch.tensor(0.0, device=mu.device)
     if properties_true is not None:
-        if all_properties is not None:
-            for pred in all_properties:
-                weighted_error = (pred - properties_true) ** 2 * prop_w
-                prop_loss += torch.mean(weighted_error)
-            prop_loss /= len(all_properties)
-        else:
-            weighted_error = (properties_pred - properties_true) ** 2 * prop_w
-            prop_loss = torch.mean(weighted_error)
-    
+        prop_loss = F.mse_loss(properties_pred, properties_true)
+
     max_nodes = atom_logits.shape[1]
-    
-    assert atom_logits.shape[0] == batch_size, f"atom_logits batch_size mismatch: {atom_logits.shape[0]} != {batch_size}"
-    
+
+    # 原子类型重构损失（交叉熵）
     x_dense, mask = to_dense_batch(batch.x, batch.batch, max_num_nodes=max_nodes, fill_value=NUM_ATOM_TYPES)
     x_dense = torch.clamp(x_dense.squeeze(-1), 0, NUM_ATOM_TYPES).long()
-    
-    padded_x = x_dense.clone()
-    
-    atom_class_weights = torch.ones(NUM_ATOM_TYPES, device=mu.device)
-    atom_class_weights[0] = 1.0
-    atom_class_weights[1] = 2.0
-    atom_class_weights[2] = 2.5
-    atom_class_weights[3] = 4.0
-    atom_class_weights[4] = 5.0
-    atom_class_weights[5] = 5.0
-    
     recon_atom_loss = F.cross_entropy(
         atom_logits.view(-1, NUM_ATOM_TYPES),
-        padded_x.view(-1),
-        weight=atom_class_weights,
+        x_dense.view(-1),
         ignore_index=NUM_ATOM_TYPES
     )
-    
+
+    # 键类型重构损失（交叉熵 + 掩码）
     edge_mask = mask.unsqueeze(2) * mask.unsqueeze(1)
-    
     edge_labels = torch.zeros(batch_size, max_nodes, max_nodes, dtype=torch.long, device=mu.device)
-    
+
     if hasattr(batch, 'edge_attr') and batch.edge_attr is not None:
         edge_true = to_dense_adj(batch.edge_index, batch.batch, edge_attr=batch.edge_attr, max_num_nodes=max_nodes)
-        edge_true = edge_true.squeeze(-1)
-        edge_labels = edge_true.long()
+        edge_labels = edge_true.squeeze(-1).long()
     else:
         edge_true = to_dense_adj(batch.edge_index, batch.batch, max_num_nodes=max_nodes)
-        edge_true = edge_true.squeeze(-1)
-        edge_labels = edge_true.long()
-        edge_labels = torch.clamp(edge_labels, 0, 4)
-    
-    edge_class_weights = torch.tensor([0.1, 5.0, 7.0, 10.0, 8.0], device=mu.device)
-    
+        edge_labels = torch.clamp(edge_true.squeeze(-1).long(), 0, 4)
+
     loss_per_element = F.cross_entropy(
         edge_logits.view(-1, 5),
         edge_labels.view(-1),
-        weight=edge_class_weights,
         reduction='none',
         ignore_index=5
     )
-    
     masked_loss = loss_per_element * edge_mask.float().view(-1)
-    
-    if edge_mask.sum() > 0:
-        recon_edge_loss = masked_loss.sum() / edge_mask.sum()
-    else:
-        recon_edge_loss = torch.tensor(0.0, device=mu.device)
-    
-    from atom_mapping import ATOM_VALENCY_LIMIT, IDX_TO_ATOM
-    valency_penalty = torch.tensor(0.0, device=mu.device)
-    
-    atom_pred = torch.argmax(atom_logits, dim=-1)
-    bond_pred = torch.argmax(edge_logits, dim=-1)
-    
-    bond_order_map = torch.tensor([0, 1, 2, 3, 1], device=mu.device)
-    
-    bond_orders = bond_order_map[bond_pred]
-    total_bond_order = bond_orders.sum(dim=-1)
-    
-    max_valence_list = []
-    for atom_idx in range(NUM_ATOM_TYPES):
-        atomic_num = IDX_TO_ATOM.get(atom_idx, 6)
-        max_valence_list.append(ATOM_VALENCY_LIMIT.get(atomic_num, 4))
-    max_valence_tensor = torch.tensor(max_valence_list, device=mu.device)
-    
-    atom_max_valence = max_valence_tensor[atom_pred]
-    valency_violations = torch.clamp(total_bond_order - atom_max_valence, min=0)
-    valency_penalty = valency_violations.sum() / (batch_size * max_nodes + 1e-6)
-    
-    # 增强性质损失权重，让模型更认真拟合 QED / logP 等性质
+    recon_edge_loss = masked_loss.sum() / edge_mask.sum() if edge_mask.sum() > 0 else torch.tensor(0.0, device=mu.device)
+
+    # 总损失
     total_loss = (
         1.0 * recon_atom_loss
         + 3.0 * recon_edge_loss
         + beta * kl_loss / batch_size
         + 0.3 * prop_loss
-        + 0.3 * valency_penalty
     )
-    
     recon_loss = recon_atom_loss + recon_edge_loss
-    
+
     return total_loss, recon_loss, kl_loss, prop_loss
 
 
@@ -161,23 +107,13 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=50, lr=0.001, 
                 log_message(msg, status_dict)
 
     completion_msg = f"数据读取完成，共计: {len(data_list)} 条有效分子"
-    log_message(f"{completion_msg}", status_dict)
+    log_message(completion_msg, status_dict)
 
     if not data_list:
         if status_dict:
             status_dict["status"] = "error"
         log_message("错误：未发现有效分子数据，训练终止。", status_dict)
         return
-
-    # 依据整个数据集的标签统计性质分布，用于构造数据驱动的 loss 权重
-    with torch.no_grad():
-        ys = torch.stack([d.y.squeeze(0) for d in data_list], dim=0)  # [N, num_props]
-        prop_std = ys.std(dim=0) + 1e-6
-        # 归一化权重：1/std，让每一维大致贡献相近；再稍微强调 QED / logP
-        property_weights = 1.0 / prop_std
-        if property_weights.numel() >= 2:
-            property_weights[0] *= 2.0  # QED
-            property_weights[1] *= 2.0  # logP
 
     max_nodes = max(max_nodes, 1)
     log_message(f"扫描数据集确定的最大节点数: {max_nodes}", status_dict)
@@ -199,7 +135,6 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=50, lr=0.001, 
 
     model = MoleculeVAE(hidden_channels=hidden_dim, latent_dim=latent_dim, max_nodes=max_nodes).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
 
     best_val_loss = float('inf')
@@ -207,46 +142,29 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=50, lr=0.001, 
     patience_counter = 0
     best_model_state = None
 
-    # 将性质权重放到正确设备上
-    property_weights = property_weights.to(device)
-
     log_message(f"\n开始训练循环 (总轮次: {epochs})...", status_dict)
     for epoch in range(1, epochs + 1):
         model.train()
+
+        # KL 退火：前 30% 轮次 β 从 0 线性增长到 beta_max
         beta_max = 0.05
         warmup_epochs = int(epochs * 0.3)
-        
-        if epoch < warmup_epochs:
-            beta = (epoch / warmup_epochs) * beta_max
-        else:
-            beta = beta_max
-        
+        beta = (epoch / warmup_epochs) * beta_max if epoch < warmup_epochs else beta_max
+
         total_loss = 0
         total_recon_loss = 0
         total_kl_loss = 0
         total_prop_loss = 0
-        
+
         for batch in train_loader:
-            batch_size = batch.num_graphs
-            num_nodes_per_graph = torch.bincount(batch.batch, minlength=batch_size)
-            current_batch_max_nodes = num_nodes_per_graph.max().item()
-            
             batch = batch.to(device)
             optimizer.zero_grad()
-            atom_logits, edge_logits, mu, logvar, properties_pred, all_properties = model(batch)
+            atom_logits, edge_logits, mu, logvar, properties_pred = model(batch)
             properties_true = batch.y
             loss, recon_loss, kl_loss, prop_loss = vae_loss(
-                atom_logits,
-                edge_logits,
-                mu,
-                logvar,
-                properties_pred,
-                properties_true,
-                batch,
-                model.max_nodes,
+                atom_logits, edge_logits, mu, logvar,
+                properties_pred, properties_true, batch,
                 beta=beta,
-                all_properties=all_properties,
-                property_weights=property_weights,
             )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -260,33 +178,26 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=50, lr=0.001, 
         avg_recon_loss = total_recon_loss / len(train_loader)
         avg_kl_loss = total_kl_loss / len(train_loader)
         avg_prop_loss = total_prop_loss / len(train_loader)
-        
+
+        # 验证阶段
         model.eval()
         val_total_loss = 0
         if len(val_loader) > 0:
             with torch.no_grad():
                 for val_batch in val_loader:
                     val_batch = val_batch.to(device)
-                    val_atom_logits, val_edge_logits, val_mu, val_logvar, val_properties_pred, val_all_properties = model(val_batch)
+                    val_atom_logits, val_edge_logits, val_mu, val_logvar, val_properties_pred = model(val_batch)
                     val_properties_true = val_batch.y
                     val_loss, _, _, _ = vae_loss(
-                        val_atom_logits,
-                        val_edge_logits,
-                        val_mu,
-                        val_logvar,
-                        val_properties_pred,
-                        val_properties_true,
-                        val_batch,
-                        model.max_nodes,
+                        val_atom_logits, val_edge_logits, val_mu, val_logvar,
+                        val_properties_pred, val_properties_true, val_batch,
                         beta=beta,
-                        all_properties=val_all_properties,
-                        property_weights=property_weights,
                     )
                     val_total_loss += val_loss.item()
             avg_val_loss = val_total_loss / len(val_loader)
         else:
-            avg_val_loss = avg_loss  # 验证集为空时用训练损失作为选取最佳模型的依据
-        
+            avg_val_loss = avg_loss
+
         log_str = f" >>> 第 [{epoch:03d}/{epochs}] 轮 | 总损失: {avg_loss:.8f} | 验证损失: {avg_val_loss:.8f} | 重构损失: {avg_recon_loss:.8f} | KL损失: {avg_kl_loss:.8f} | 性质损失: {avg_prop_loss:.8f} | Beta: {beta:.4f}"
 
         if status_dict is not None:
@@ -296,9 +207,9 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=50, lr=0.001, 
             status_dict["logs"].append(log_str)
 
         print(log_str)
-        
+
         scheduler.step(avg_val_loss)
-        
+
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             best_epoch = epoch
@@ -345,24 +256,3 @@ def train_custom_model(dataset_path, model_name, save_dir, epochs=50, lr=0.001, 
         log_message("训练完成，模型已成功保存至服务器。", status_dict)
 
 
-def get_custom_loader(dataset_path, batch_size=DEFAULT_BATCH_SIZE):
-    smiles_list = []
-    try:
-        with open(dataset_path, 'r') as f:
-            smiles_list = [line.strip() for line in f if line.strip()]
-    except Exception as e:
-        print(f"加载数据集失败: {e}")
-        return None
-    
-    data_list = []
-    for smiles in smiles_list:
-        data = smiles_to_graph(smiles)
-        if data:
-            data_list.append(data)
-    
-    if not data_list:
-        print("未找到有效的分子数据")
-        return None
-    
-    loader = DataLoader(data_list, batch_size=batch_size, shuffle=True)
-    return loader

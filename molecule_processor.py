@@ -3,15 +3,11 @@ from rdkit import Chem
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem import rdMolDescriptors
 from torch_geometric.data import Data
-from atom_mapping import ATOM_TO_IDX, ALLOWED_ATOMS
-from config import NUM_PROPERTIES
+from config import ATOM_TO_IDX, ALLOWED_ATOMS, NUM_PROPERTIES
 
 
-def _calculate_sa_score(mol):
-    """
-    与 reconstruct.calculate_sa_score 使用同一套简化 SA 逻辑，
-    保证训练标签与生成阶段评估的一致性。
-    """
+def calculate_sa_score(mol):
+    """简化版合成可达性评分（SA Score），训练标签与生成评估共用此函数。"""
     try:
         ring_info = mol.GetRingInfo()
         num_rings = ring_info.NumRings()
@@ -72,7 +68,7 @@ def smiles_to_graph(smiles):
         hba = Descriptors.NumHAcceptors(mol)                 # 6
         rot_bonds = rdMolDescriptors.CalcNumRotatableBonds(mol)  # 7
         tpsa = rdMolDescriptors.CalcTPSA(mol)                # 8
-        sa_score = _calculate_sa_score(mol)                  # 9
+        sa_score = calculate_sa_score(mol)                   # 9
 
         y_list = [
             float(qed),
@@ -94,14 +90,3 @@ def smiles_to_graph(smiles):
         return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
     except Exception:
         return None
-
-
-def validate_molecule(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return False
-    try:
-        Chem.SanitizeMol(mol)
-        return True
-    except Exception:
-        return False

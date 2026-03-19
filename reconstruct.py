@@ -1,25 +1,154 @@
 import torch
-import os
 from rdkit import Chem
 from rdkit import RDLogger
 from rdkit.Chem import QED, Descriptors
 from rdkit.Chem import rdMolDescriptors
-from model import MoleculeVAE
-from admet import admet_predict
-from config import MODEL_DIR, DEFAULT_MODEL_NAME, DEFAULT_HIDDEN_DIM, LATENT_DIM, DEFAULT_GENERATE_ATTEMPTS, DEFAULT_GENERATE_BATCH_SIZE, get_device
-from atom_mapping import IDX_TO_ATOM, ATOM_VALENCY_LIMIT
+from rdkit.Chem.Scaffolds import MurckoScaffold
+from rdkit.Chem import DataStructs
+from rdkit.Chem.AllChem import GetMorganFingerprintAsBitVect
+from molecule_processor import calculate_sa_score
+from config import IDX_TO_ATOM, ATOM_VALENCY_LIMIT, NUM_ATOM_TYPES
 
 
-def calculate_sa_score(mol):
+# ==================== 骨架工具 ====================
+
+def get_murcko_scaffold_smiles(smiles):
+    """
+    提取分子的 Bemis-Murcko 骨架 SMILES（环系 + 连接键，去除侧链）。
+    用于骨架跃迁与优化时判断生成分子是否与 Hit 保持相同核心骨架。
+    """
+    mol = Chem.MolFromSmiles(smiles)
+    if not mol:
+        return None
     try:
-        ring_info = mol.GetRingInfo()
-        num_rings = ring_info.NumRings()
-        num_atoms = mol.GetNumAtoms()
-        num_heteroatoms = sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() not in [6, 1])
-        sa_score = 1.0 + 0.1 * num_rings + 0.05 * num_atoms + 0.1 * num_heteroatoms
-        return min(sa_score, 10.0)
-    except:
-        return 5.0
+        scaffold = MurckoScaffold.GetScaffoldForMol(mol)
+        if scaffold is None or scaffold.GetNumAtoms() < 2:
+            return None
+        return Chem.MolToSmiles(scaffold, isomericSmiles=False)
+    except Exception:
+        return None
+
+
+def scaffold_tanimoto_similarity(scaffold_smiles_a, scaffold_smiles_b, fp_radius=2, fp_bits=2048):
+    """
+    计算两个 Murcko 骨架 SMILES 的 Tanimoto 相似度（基于骨架分子的 Morgan 指纹）。
+    用于骨架跃迁时放宽「同骨架」判定：相似度 >= 阈值即视为骨架一致（避免因 SMILES 规范化
+    或解码细微差异导致完全匹配失败）。返回 0.0~1.0，任一骨架无效时返回 0.0。
+    """
+    if not scaffold_smiles_a or not scaffold_smiles_b:
+        return 0.0
+    try:
+        mol_a = Chem.MolFromSmiles(scaffold_smiles_a)
+        mol_b = Chem.MolFromSmiles(scaffold_smiles_b)
+        if mol_a is None or mol_b is None:
+            return 0.0
+        fp_a = GetMorganFingerprintAsBitVect(mol_a, fp_radius, nBits=fp_bits)
+        fp_b = GetMorganFingerprintAsBitVect(mol_b, fp_radius, nBits=fp_bits)
+        return float(DataStructs.TanimotoSimilarity(fp_a, fp_b))
+    except Exception:
+        return 0.0
+
+
+# ==================== ADMET 评估 ====================
+
+def _esol_log_s(logp, mw, rot_bonds, mol):
+    """
+    ESOL 估计水溶性 log(S)，单位 mol/L。
+    公式: log(S) = 0.16 - 0.63*clogP - 0.0062*MW + 0.066*RB - 0.74*AP
+    AP=芳香重原子比例 (Delaney, J. Chem. Inf. Model., 2004)
+    """
+    try:
+        heavy = mol.GetNumHeavyAtoms()
+        if heavy == 0:
+            return 0.0
+        aromatic_heavy = sum(1 for a in mol.GetAtoms() if a.GetIsAromatic() and a.GetAtomicNum() != 1)
+        ap = aromatic_heavy / heavy
+        log_s = 0.16 - 0.63 * logp - 0.0062 * mw + 0.066 * rot_bonds - 0.74 * ap
+        return round(log_s, 3)
+    except Exception:
+        return None
+
+
+def _permeability_label(tpsa, logp):
+    """基于 TPSA 与 LogP 的渗透性倾向（口服吸收相关）。"""
+    if tpsa <= 90 and 0 <= logp <= 5:
+        return "高"
+    if tpsa <= 140 and -1 <= logp <= 6:
+        return "中"
+    return "低"
+
+
+def _bbb_potential(tpsa, logp, mw):
+    """血脑屏障透过潜力（经验规则：TPSA 较小、LogP 适中时更易透过 BBB）。"""
+    if mw > 500:
+        return "不易"
+    if tpsa < 90 and 1 <= logp <= 5:
+        return "可能"
+    if tpsa < 120 and 0 <= logp <= 6:
+        return "一般"
+    return "不易"
+
+
+_RISK_SMARTS = [
+    "[$([N+](=O)[O-])]",          # 硝基
+    "[#7]-[#7]",                   # N-N 肼/偶氮
+    "[NX3](=O)([#6])[#6]",        # 硝基另一写法
+]
+_RISK_NAMES = ["硝基", "肼/偶氮", "硝基(芳)"]
+
+
+def _analyze_risk_substructures(mol):
+    """统计分子中匹配的警示子结构，同时返回总数和各类摘要。"""
+    total = 0
+    parts = []
+    try:
+        for sma, name in zip(_RISK_SMARTS, _RISK_NAMES):
+            pat = Chem.MolFromSmarts(sma)
+            if pat is None:
+                continue
+            n = len(mol.GetSubstructMatches(pat))
+            total += n
+            parts.append(f"{name}:{n}")
+    except Exception:
+        return 0, "—"
+    return total, ("，".join(parts) if parts else "无")
+
+
+def _admet_predict(mol, logp, mw, tpsa, rot_bonds):
+    """对单个分子计算 ADMET 相关指标（吸收、分布、毒性等）。"""
+    result = {
+        "log_solubility": None,
+        "solubility_label": "—",
+        "permeability": "—",
+        "bbb_potential": "—",
+        "mol_refractivity": None,
+        "risk_substructure_count": 0,
+        "risk_summary": "—",
+    }
+    if mol is None:
+        return result
+    try:
+        log_s = _esol_log_s(logp, mw, rot_bonds, mol)
+        result["log_solubility"] = log_s
+        if log_s is not None:
+            if log_s >= -4:
+                result["solubility_label"] = "较好"
+            elif log_s >= -6:
+                result["solubility_label"] = "中等"
+            else:
+                result["solubility_label"] = "较差"
+        result["permeability"] = _permeability_label(tpsa, logp)
+        result["bbb_potential"] = _bbb_potential(tpsa, logp, mw)
+        result["mol_refractivity"] = round(Descriptors.MolMR(mol), 2)
+        risk_count, risk_summary = _analyze_risk_substructures(mol)
+        result["risk_substructure_count"] = risk_count
+        result["risk_summary"] = risk_summary
+    except Exception:
+        pass
+    return result
+
+
+# ==================== 分子评估 ====================
 
 def evaluate_molecule(smiles):
     mol = Chem.MolFromSmiles(smiles)
@@ -34,32 +163,24 @@ def evaluate_molecule(smiles):
         rot_bonds = rdMolDescriptors.CalcNumRotatableBonds(mol)
         heavy_atom_count = mol.GetNumHeavyAtoms()
         ring_count = Descriptors.RingCount(mol)
+        tpsa = rdMolDescriptors.CalcTPSA(mol)
         sa_score = calculate_sa_score(mol)
-        allowed_elements = {6, 7, 8, 9, 16, 17}
-        has_allowed_elements_only = all(atom.GetAtomicNum() in allowed_elements for atom in mol.GetAtoms())
-        lipinski_ro5_violations = 0
+
         lipinski_checks = {
             'mw': mw_score <= 500,
             'logp': logp_score <= 5,
             'hbd': hbd <= 5,
             'hba': hba <= 10
         }
-        if not lipinski_checks['mw']: lipinski_ro5_violations += 1
-        if not lipinski_checks['logp']: lipinski_ro5_violations += 1
-        if not lipinski_checks['hbd']: lipinski_ro5_violations += 1
-        if not lipinski_checks['hba']: lipinski_ro5_violations += 1
-        
-        tpsa = rdMolDescriptors.CalcTPSA(mol)
+        lipinski_ro5_violations = sum(1 for v in lipinski_checks.values() if not v)
+
         veber_checks = {
             'rot_bonds': rot_bonds <= 10,
             'tpsa': tpsa <= 140
         }
-        veber_violations = 0
-        if not veber_checks['rot_bonds']: veber_violations += 1
-        if not veber_checks['tpsa']: veber_violations += 1
+        veber_violations = sum(1 for v in veber_checks.values() if not v)
 
-        # ADMET 评估：溶解度（ESOL）、警示子结构
-        admet = admet_predict(mol)
+        admet = _admet_predict(mol, logp_score, mw_score, tpsa, rot_bonds)
         return {
             "qed": round(qed_score, 3),
             "logp": round(logp_score, 3),
@@ -71,12 +192,10 @@ def evaluate_molecule(smiles):
             "heavy_atom_count": heavy_atom_count,
             "ring_count": ring_count,
             "sa_score": round(sa_score, 3),
-            "has_allowed_elements_only": has_allowed_elements_only,
             "lipinski_ro5_violations": lipinski_ro5_violations,
             "lipinski_checks": lipinski_checks,
             "veber_violations": veber_violations,
             "veber_checks": veber_checks,
-            "valid": "通过校验",
             "log_solubility": admet.get("log_solubility"),
             "solubility_label": admet.get("solubility_label", "—"),
             "permeability": admet.get("permeability", "—"),
@@ -91,48 +210,12 @@ def evaluate_molecule(smiles):
 RDLogger.DisableLog('rdApp.*')
 
 
-def check_molecule_constraints(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    if not mol: return False, "分子无效"
-    
-    try:
-        heavy_atom_count = mol.GetNumHeavyAtoms()
-        if heavy_atom_count < 10 or heavy_atom_count > 30:
-            return False, f"重原子数不符合要求 ({heavy_atom_count})"
-        
-        ring_count = Descriptors.RingCount(mol)
-        if ring_count < 1:
-            return False, f"环数量不符合要求 ({ring_count})"
-        
-        allowed_elements = {6, 7, 8, 9, 16, 17}
-        for atom in mol.GetAtoms():
-            if atom.GetAtomicNum() not in allowed_elements:
-                return False, f"包含不允许的元素 ({atom.GetSymbol()})"
-        
-        mw = Descriptors.MolWt(mol)
-        logp = Descriptors.MolLogP(mol)
-        hbd = Descriptors.NumHDonors(mol)
-        hba = Descriptors.NumHAcceptors(mol)
-        
-        violations = 0
-        if mw > 500: violations += 1
-        if logp > 5: violations += 1
-        if hbd > 5: violations += 1
-        if hba > 10: violations += 1
-        
-        if violations > 1:
-            return False, f"Lipinski规则违反过多 ({violations}个)"
-        
-        return True, "符合所有约束条件"
-    except Exception as e:
-        return False, f"检查失败: {str(e)}"
+# ==================== 解码器 ====================
 
-
-# 生成时解码的最大节点数：与模型容量一致，但不超过此上限（避免过大分子难以成键）
 MAX_DECODE_NODES = 30
 
 
-def logits_to_smiles(atom_logits, edge_logits, strict=False):
+def logits_to_smiles(atom_logits, edge_logits):
     batch_size = atom_logits.size(0)
     smiles_list = []
     model_max_nodes = atom_logits.size(1)
@@ -140,27 +223,12 @@ def logits_to_smiles(atom_logits, edge_logits, strict=False):
 
     for batch_idx in range(batch_size):
         mol = Chem.RWMol()
-        # 温度略高一点有利于解码出更多样、有时更易成键的结构（过小易塌缩为全 C/无键）
-        temperature = 0.6 if strict else 0.5
-        atom_probs = torch.softmax(atom_logits[batch_idx] / temperature, dim=-1)
-        
-        atom_probs /= atom_probs.sum(dim=-1, keepdim=True)
-        
-        if strict and torch.rand(1).item() < 0.8:
-            atom_types = torch.argmax(atom_probs, dim=-1)
-        else:
-            atom_types = torch.argmax(atom_probs, dim=-1)
-        
-        atom_types = atom_types[:max_actual_nodes]
-        
-        if torch.all(atom_types == 0):
-            num_nodes = atom_types.shape[0]
-            if num_nodes > 0:
-                replace_idx = torch.randint(0, num_nodes, (1,)).item()
-                non_c_atom = torch.tensor([1, 1, 1, 2, 2, 2, 3, 4, 5])[torch.randint(0, 9, (1,))].item()
-                atom_types[replace_idx] = non_c_atom
-        
-        from atom_mapping import NUM_ATOM_TYPES
+
+        atom_temperature = 0.8
+        atom_probs = torch.softmax(atom_logits[batch_idx] / atom_temperature, dim=-1)
+        atom_probs = atom_probs[:max_actual_nodes]
+        atom_types = torch.multinomial(atom_probs, num_samples=1).squeeze(-1)
+
         added_atoms = []
         for i in range(atom_types.size(0)):
             atom_id = atom_types[i].item()
@@ -179,20 +247,17 @@ def logits_to_smiles(atom_logits, edge_logits, strict=False):
             smiles_list.append(None)
             continue
 
-        from atom_mapping import ATOM_VALENCY_LIMIT
-        
-        edge_probs = torch.softmax(edge_logits[batch_idx] / 0.4, dim=-1)
-        bond_types = torch.argmax(edge_probs, dim=-1)
+        edge_temperature = 0.6
+        edge_probs = torch.softmax(edge_logits[batch_idx] / edge_temperature, dim=-1)
+        n = edge_probs.shape[0]
+        bond_types = torch.multinomial(edge_probs.view(-1, 5), num_samples=1).squeeze(-1).view(n, n)
         
         used_valency = [0] * len(added_atoms)
-        is_aromatic = [False] * len(added_atoms)
         
         for bond_order in [1, 4, 2, 3]:
             for i in range(len(added_atoms)):
                 for j in range(i + 1, len(added_atoms)):
-                    original_i = i
-                    original_j = j
-                    bond_type = bond_types[original_i, original_j].item()
+                    bond_type = bond_types[i, j].item()
                     
                     if bond_type != bond_order:
                         continue
@@ -228,8 +293,6 @@ def logits_to_smiles(atom_logits, edge_logits, strict=False):
                         if atomic_num_i not in [6,7,8,16] or atomic_num_j not in [6,7,8,16]:
                             continue
                         bond = Chem.BondType.AROMATIC
-                        is_aromatic[i] = True
-                        is_aromatic[j] = True
                         mol.GetAtomWithIdx(i).SetIsAromatic(True)
                         mol.GetAtomWithIdx(j).SetIsAromatic(True)
                     else:
@@ -278,57 +341,3 @@ def logits_to_smiles(atom_logits, edge_logits, strict=False):
             smiles_list.append(None)
     
     return smiles_list
-
-
-def real_generate():
-    device = get_device()
-    print(f"正在使用设备: {device}")
-
-    try:
-        default_model_path = os.path.join(MODEL_DIR, f"{DEFAULT_MODEL_NAME}.pth")
-        checkpoint = torch.load(default_model_path, map_location=device)
-        max_nodes = checkpoint.get('max_nodes', 20)
-        hidden_channels = checkpoint.get('hidden_channels', DEFAULT_HIDDEN_DIM)
-        model = MoleculeVAE(hidden_channels=hidden_channels, latent_dim=LATENT_DIM, max_nodes=max_nodes).to(device)
-        model.load_state_dict(checkpoint['state_dict'])
-        print(f"✅ 已成功加载 VAE 模型权重 (max_nodes={max_nodes}, hidden_channels={hidden_channels})。")
-    except FileNotFoundError:
-        print(f"⚠️ 未找到 {DEFAULT_MODEL_NAME}.pth，将使用随机初始化的模型进行演示。")
-        model = MoleculeVAE(hidden_channels=DEFAULT_HIDDEN_DIM, latent_dim=LATENT_DIM).to(device)
-
-    model.eval()
-
-    print("\n--- 正在从潜在空间进行批量采样生成 ---")
-
-    success_count = 0
-    max_attempts = DEFAULT_GENERATE_ATTEMPTS
-
-    with torch.no_grad():
-        for i in range(max_attempts):
-            z = torch.randn(DEFAULT_GENERATE_BATCH_SIZE, LATENT_DIM).to(device)
-            from atom_mapping import NUM_ATOM_TYPES
-            atom_logits = model.decoder_atoms(z).view(-1, model.max_nodes, NUM_ATOM_TYPES)
-            edge_logits = model.decoder_edges(z).view(-1, model.max_nodes, model.max_nodes, 5)
-            res_smiles_list = logits_to_smiles(atom_logits, edge_logits)
-
-            batch_success = 0
-            for j, res_smiles in enumerate(res_smiles_list):
-                if res_smiles and len(res_smiles) > 1:
-                    print(f"🎉 尝试第 {i + 1} 次 - 批次 {j + 1} - 成功生成分子: {res_smiles}")
-                    success_count += 1
-                    batch_success += 1
-            
-            if batch_success == 0:
-                print(f"❌ 尝试第 {i + 1} 次 - 生成无效（化学规则拦截）")
-            else:
-                print(f"✅ 尝试第 {i + 1} 次 - 批次成功生成 {batch_success} 个分子")
-
-    if success_count == 0:
-        print("\n结论：本次采样未捕获到合法分子。")
-        print("建议方案：1. 增加 train.py 的训练轮数；2. 增加数据集样本量。")
-    else:
-        print(f"\n生成结束，共获得 {success_count} 个合法分子。")
-
-
-if __name__ == "__main__":
-    real_generate()

@@ -15,6 +15,7 @@
         </header>
         <nav class="nav-menu">
             <div class="nav-item active" onclick="switchTab('genPanel', this)"><i class="bi bi-cpu"></i> 分子生成服务</div>
+            <div class="nav-item" onclick="switchTab('scaffoldPanel', this)"><i class="bi bi-bounding-box"></i> 骨架跃迁与优化</div>
             <div class="nav-item" onclick="switchTab('trainPanel', this)"><i class="bi bi-database-add"></i> 模型训练管理</div>
         </nav>
     </aside>
@@ -186,28 +187,6 @@
                             </div>
                         </div>
 
-                        <!-- 折叠 3：采样与去重（最下，仅每轮解码数 + Tanimoto） -->
-                        <div class="mb-4">
-                            <h6 class="mb-2 d-flex align-items-center cursor-pointer" data-bs-toggle="collapse" data-bs-target="#genSampleSettings" aria-expanded="false" aria-controls="genSampleSettings">
-                                <i class="bi bi-chevron-right me-2"></i>采样与去重
-                            </h6>
-                            <div id="genSampleSettings" class="collapse mt-2">
-                                <div class="mb-3">
-                                    <label class="form-label">每轮解码数</label>
-                                    <select id="decodeBatchSizeSelect" class="form-select">
-                                        <option value="4">4</option>
-                                        <option value="8" selected>8</option>
-                                        <option value="16">16</option>
-                                    </select>
-                                    <div class="form-text small">每轮采样的 z 数量，越大单轮产出越多</div>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">Tanimoto 去重阈值: <span id="tanimotoValue">0.85</span></label>
-                                    <input type="range" id="tanimotoSlider" class="form-range" min="0.70" max="0.95" step="0.05" value="0.85">
-                                    <div class="form-text small">相似度高于此值的分子只保留一个</div>
-                                </div>
-                            </div>
-                        </div>
                     </div>
                 </div>
                 <div class="col-lg-8">
@@ -329,6 +308,100 @@
                                                     <div id="veberTpsaCheck"></div>
                                                 </div>
                                             </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 骨架跃迁与优化面板 -->
+        <section id="scaffoldPanel" style="display:none;">
+            <div class="row g-4">
+                <div class="col-lg-4">
+                    <div class="card p-4">
+                        <h5 class="mb-4"><i class="bi bi-bounding-box me-2"></i>骨架跃迁与优化</h5>
+                        <div class="mb-3">
+                            <label class="form-label">选择优化模型</label>
+                            <select id="scaffoldModelSelect" class="form-select"></select>
+                            <div class="form-text">模型用于潜在空间微扰生成衍生物</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">苗头化合物 SMILES</label>
+                            <textarea id="scaffoldHitSmiles" class="form-control font-monospace" rows="3" placeholder="例如: CC(=O)Oc1ccccc1C(=O)O"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">优化目标性质</label>
+                            <select id="scaffoldTargetProperty" class="form-select">
+                                <option value="log_solubility" selected>水溶性 log(S)（ESOL）</option>
+                                <option value="qed">药物相似度 QED</option>
+                                <option value="logp">油水分配系数 LogP</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">优化方向</label>
+                            <select id="scaffoldDirection" class="form-select">
+                                <option value="max" selected>最大化</option>
+                                <option value="min">最小化</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">候选数量: <span id="scaffoldNumValue">100</span></label>
+                            <input type="range" id="scaffoldNumSlider" class="form-range" min="20" max="200" step="10" value="100">
+                        </div>
+                        <button type="button" id="scaffoldOptimizeBtn" class="btn btn-primary w-100 py-3">执行骨架优化</button>
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between small text-muted mb-1">
+                                <span>任务进度</span>
+                                <span id="scaffoldProgressPercent">0%</span>
+                            </div>
+                            <div class="progress process-progress mb-2">
+                                <div id="scaffoldProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;"></div>
+                            </div>
+                            <div id="scaffoldLogs" class="log-console log-console-gen mt-2 small"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-8">
+                    <div class="card p-4 h-100">
+                        <div id="scaffoldEmptyState" class="text-center py-5 text-muted">
+                            <i class="bi bi-bounding-box display-1 text-light"></i>
+                            <p class="mt-3 mb-0">提交任务后将在此展示生成的衍生物</p>
+                        </div>
+                        <div id="scaffoldResultDisplay" style="display:none;">
+                            <div id="scaffoldSwitcher" class="mt-3"></div>
+                            <div class="row g-4">
+                                <div class="col-md-5">
+                                    <div class="card p-3 mb-3 text-center">
+                                        <h6 class="mb-2 text-secondary">原苗头化合物 (Hit)</h6>
+                                        <img id="scaffoldHitImg" src="" alt="原分子" class="img-fluid mb-2" style="max-height:200px;">
+                                        <div class="bg-light p-2 rounded text-break small font-monospace" id="scaffoldHitSmilesDisplay"></div>
+                                    </div>
+                                    <div class="card p-3 text-center">
+                                        <h6 class="mb-2 text-primary">当前衍生物</h6>
+                                        <img id="scaffoldMolImg" src="" alt="衍生物" class="img-fluid mb-2" style="max-height:200px;">
+                                        <div class="bg-light p-2 rounded text-break small font-monospace" id="scaffoldSmilesCode"></div>
+                                    </div>
+                                </div>
+                                <div class="col-md-7">
+                                    <div class="card p-3 mb-4">
+                                        <h6 class="mb-3 text-primary">分子评分对比（原苗头 vs 当前衍生物）</h6>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm align-middle mb-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th style="min-width: 120px;">指标</th>
+                                                        <th>原苗头</th>
+                                                        <th>当前衍生物</th>
+                                                        <th>变化</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="scaffoldCompareTableBody">
+                                                </tbody>
+                                            </table>
                                         </div>
                                     </div>
                                 </div>

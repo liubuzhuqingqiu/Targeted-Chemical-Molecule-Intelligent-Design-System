@@ -2,6 +2,7 @@
 class MoleculeDesignPlatform {
     constructor() {
         this.pollInterval = null;
+        this.scaffoldPollInterval = null;
         this.displayedCount = 0; // 记录已显示的日志条数
         this.init();
     }
@@ -22,6 +23,10 @@ class MoleculeDesignPlatform {
         
         // 训练表单提交事件
         document.getElementById('trainForm').onsubmit = (e) => this.handleTrainSubmit(e);
+        
+        // 骨架优化按钮
+        const scaffoldOptimizeBtn = document.getElementById('scaffoldOptimizeBtn');
+        if (scaffoldOptimizeBtn) scaffoldOptimizeBtn.onclick = () => this.runScaffoldOptimize();
         
         // 滑块值实时更新
         this.bindSliderEvents();
@@ -73,9 +78,6 @@ class MoleculeDesignPlatform {
         // 样本数量默认值
         document.getElementById('sampleCountSlider').value = 100;
         document.getElementById('sampleCountValue').textContent = '100';
-        document.getElementById('decodeBatchSizeSelect').value = '8';
-        document.getElementById('tanimotoSlider').value = 0.85;
-        document.getElementById('tanimotoValue').textContent = '0.85';
         
         // 显示成功提示
         this.showSuccessToast('已恢复默认参数值');
@@ -110,208 +112,56 @@ class MoleculeDesignPlatform {
         }, 2500);
     }
     
-    // 绑定折叠事件，实现折叠符号的动态变化
     bindCollapseEvents() {
-        // 核心药化规则折叠事件
-        const lipinskiRules = document.getElementById('lipinskiRules');
-        const lipinskiIcon = document.querySelector('[data-bs-target="#lipinskiRules"] i');
-        
-        if (lipinskiRules && lipinskiIcon) {
-            lipinskiRules.addEventListener('show.bs.collapse', () => {
-                lipinskiIcon.classList.remove('bi-chevron-right');
-                lipinskiIcon.classList.add('bi-chevron-down');
-            });
-            
-            lipinskiRules.addEventListener('hide.bs.collapse', () => {
-                lipinskiIcon.classList.remove('bi-chevron-down');
-                lipinskiIcon.classList.add('bi-chevron-right');
-            });
-        }
-        
-        // 模型与采样设置折叠事件
-        const genSampleSettings = document.getElementById('genSampleSettings');
-        const genSampleIcon = document.querySelector('[data-bs-target="#genSampleSettings"] i');
-        if (genSampleSettings && genSampleIcon) {
-            genSampleSettings.addEventListener('show.bs.collapse', () => {
-                genSampleIcon.classList.remove('bi-chevron-right');
-                genSampleIcon.classList.add('bi-chevron-down');
-            });
-            genSampleSettings.addEventListener('hide.bs.collapse', () => {
-                genSampleIcon.classList.remove('bi-chevron-down');
-                genSampleIcon.classList.add('bi-chevron-right');
-            });
-        }
-        
-        // 综合质量评分折叠事件
-        const qualityScores = document.getElementById('qualityScores');
-        const qualityIcon = document.querySelector('[data-bs-target="#qualityScores"] i');
-        
-        if (qualityScores && qualityIcon) {
-            qualityScores.addEventListener('show.bs.collapse', () => {
-                qualityIcon.classList.remove('bi-chevron-right');
-                qualityIcon.classList.add('bi-chevron-down');
-            });
-            
-            qualityScores.addEventListener('hide.bs.collapse', () => {
-                qualityIcon.classList.remove('bi-chevron-down');
-                qualityIcon.classList.add('bi-chevron-right');
-            });
-        }
-        
-        // 规则检查折叠事件
-        const ruleChecks = document.getElementById('ruleChecks');
-        const ruleIcon = document.querySelector('[data-bs-target="#ruleChecks"] i');
-        
-        if (ruleChecks && ruleIcon) {
-            ruleChecks.addEventListener('show.bs.collapse', () => {
-                ruleIcon.classList.remove('bi-chevron-right');
-                ruleIcon.classList.add('bi-chevron-down');
-            });
-            
-            ruleChecks.addEventListener('hide.bs.collapse', () => {
-                ruleIcon.classList.remove('bi-chevron-down');
-                ruleIcon.classList.add('bi-chevron-right');
-            });
-        }
+        ['lipinskiRules', 'qualityScores', 'ruleChecks'].forEach(id => {
+            const el = document.getElementById(id);
+            const icon = document.querySelector(`[data-bs-target="#${id}"] i`);
+            if (!el || !icon) return;
+            el.addEventListener('show.bs.collapse', () => { icon.classList.replace('bi-chevron-right', 'bi-chevron-down'); });
+            el.addEventListener('hide.bs.collapse', () => { icon.classList.replace('bi-chevron-down', 'bi-chevron-right'); });
+        });
     }
     
-    // 绑定滑块事件
+    // 绑定范围滑块对（min/max 联动），format 控制显示格式
+    _bindRangeSliderPair(minId, maxId, minValId, maxValId, format) {
+        const minS = document.getElementById(minId);
+        const maxS = document.getElementById(maxId);
+        const minV = document.getElementById(minValId);
+        const maxV = document.getElementById(maxValId);
+        if (!minS || !maxS || !minV || !maxV) return;
+        const parse = format === 'float' ? parseFloat : (v) => parseInt(v, 10);
+        const display = format === 'float' ? (v) => parseFloat(v).toFixed(1) : (v) => v;
+        minS.addEventListener('input', () => {
+            if (parse(minS.value) > parse(maxS.value)) minS.value = maxS.value;
+            minV.textContent = display(minS.value);
+        });
+        maxS.addEventListener('input', () => {
+            if (parse(maxS.value) < parse(minS.value)) maxS.value = minS.value;
+            maxV.textContent = display(maxS.value);
+        });
+    }
+
+    // 绑定单值滑块
+    _bindSingleSlider(sliderId, valueId, format) {
+        const slider = document.getElementById(sliderId);
+        const valueEl = document.getElementById(valueId);
+        if (!slider || !valueEl) return;
+        slider.addEventListener('input', () => { valueEl.textContent = format(slider.value); });
+    }
+
     bindSliderEvents() {
-        // MW滑块
-        const mwMinSlider = document.getElementById('mwMinSlider');
-        const mwMaxSlider = document.getElementById('mwMaxSlider');
-        const mwMinValue = document.getElementById('mwMinValue');
-        const mwMaxValue = document.getElementById('mwMaxValue');
-        if (mwMinSlider && mwMaxSlider && mwMinValue && mwMaxValue) {
-            mwMinSlider.addEventListener('input', () => {
-                // 确保最小值不大于最大值
-                if (parseInt(mwMinSlider.value) > parseInt(mwMaxSlider.value)) {
-                    mwMinSlider.value = mwMaxSlider.value;
-                }
-                mwMinValue.textContent = mwMinSlider.value;
-            });
-            mwMaxSlider.addEventListener('input', () => {
-                // 确保最大值不小于最小值
-                if (parseInt(mwMaxSlider.value) < parseInt(mwMinSlider.value)) {
-                    mwMaxSlider.value = mwMinSlider.value;
-                }
-                mwMaxValue.textContent = mwMaxSlider.value;
-            });
-        }
-        
-        // LogP滑块
-        const logpMinSlider = document.getElementById('logpMinSlider');
-        const logpMaxSlider = document.getElementById('logpMaxSlider');
-        const logpMinValue = document.getElementById('logpMinValue');
-        const logpMaxValue = document.getElementById('logpMaxValue');
-        if (logpMinSlider && logpMaxSlider && logpMinValue && logpMaxValue) {
-            logpMinSlider.addEventListener('input', () => {
-                if (parseFloat(logpMinSlider.value) > parseFloat(logpMaxSlider.value)) {
-                    logpMinSlider.value = logpMaxSlider.value;
-                }
-                logpMinValue.textContent = parseFloat(logpMinSlider.value).toFixed(1);
-            });
-            logpMaxSlider.addEventListener('input', () => {
-                if (parseFloat(logpMaxSlider.value) < parseFloat(logpMinSlider.value)) {
-                    logpMaxSlider.value = logpMinSlider.value;
-                }
-                logpMaxValue.textContent = parseFloat(logpMaxSlider.value).toFixed(1);
-            });
-        }
-        
-        // HBD滑块
-        const hbdMinSlider = document.getElementById('hbdMinSlider');
-        const hbdMaxSlider = document.getElementById('hbdMaxSlider');
-        const hbdMinValue = document.getElementById('hbdMinValue');
-        const hbdMaxValue = document.getElementById('hbdMaxValue');
-        if (hbdMinSlider && hbdMaxSlider && hbdMinValue && hbdMaxValue) {
-            hbdMinSlider.addEventListener('input', () => {
-                if (parseInt(hbdMinSlider.value) > parseInt(hbdMaxSlider.value)) {
-                    hbdMinSlider.value = hbdMaxSlider.value;
-                }
-                hbdMinValue.textContent = hbdMinSlider.value;
-            });
-            hbdMaxSlider.addEventListener('input', () => {
-                if (parseInt(hbdMaxSlider.value) < parseInt(hbdMinSlider.value)) {
-                    hbdMaxSlider.value = hbdMinSlider.value;
-                }
-                hbdMaxValue.textContent = hbdMaxSlider.value;
-            });
-        }
-        
-        // HBA滑块
-        const hbaMinSlider = document.getElementById('hbaMinSlider');
-        const hbaMaxSlider = document.getElementById('hbaMaxSlider');
-        const hbaMinValue = document.getElementById('hbaMinValue');
-        const hbaMaxValue = document.getElementById('hbaMaxValue');
-        if (hbaMinSlider && hbaMaxSlider && hbaMinValue && hbaMaxValue) {
-            hbaMinSlider.addEventListener('input', () => {
-                if (parseInt(hbaMinSlider.value) > parseInt(hbaMaxSlider.value)) {
-                    hbaMinSlider.value = hbaMaxSlider.value;
-                }
-                hbaMinValue.textContent = hbaMinSlider.value;
-            });
-            hbaMaxSlider.addEventListener('input', () => {
-                if (parseInt(hbaMaxSlider.value) < parseInt(hbaMinSlider.value)) {
-                    hbaMaxSlider.value = hbaMinSlider.value;
-                }
-                hbaMaxValue.textContent = hbaMaxSlider.value;
-            });
-        }
-        
-        // RotBonds滑块
-        const rotBondsMinSlider = document.getElementById('rotBondsMinSlider');
-        const rotBondsMaxSlider = document.getElementById('rotBondsMaxSlider');
-        const rotBondsMinValue = document.getElementById('rotBondsMinValue');
-        const rotBondsMaxValue = document.getElementById('rotBondsMaxValue');
-        if (rotBondsMinSlider && rotBondsMaxSlider && rotBondsMinValue && rotBondsMaxValue) {
-            rotBondsMinSlider.addEventListener('input', () => {
-                if (parseInt(rotBondsMinSlider.value) > parseInt(rotBondsMaxSlider.value)) {
-                    rotBondsMinSlider.value = rotBondsMaxSlider.value;
-                }
-                rotBondsMinValue.textContent = rotBondsMinSlider.value;
-            });
-            rotBondsMaxSlider.addEventListener('input', () => {
-                if (parseInt(rotBondsMaxSlider.value) < parseInt(rotBondsMinSlider.value)) {
-                    rotBondsMaxSlider.value = rotBondsMinSlider.value;
-                }
-                rotBondsMaxValue.textContent = rotBondsMaxSlider.value;
-            });
-        }
-        
-        // QED滑块
-        const qedSlider = document.getElementById('qedSlider');
-        const qedValue = document.getElementById('qedValue');
-        if (qedSlider && qedValue) {
-            qedSlider.addEventListener('input', () => {
-                qedValue.textContent = parseFloat(qedSlider.value).toFixed(2);
-            });
-        }
-        
-        // SA滑块
-        const saSlider = document.getElementById('saSlider');
-        const saValue = document.getElementById('saValue');
-        if (saSlider && saValue) {
-            saSlider.addEventListener('input', () => {
-                saValue.textContent = parseFloat(saSlider.value).toFixed(1);
-            });
-        }
-        
-        // 样本数量滑块
-        const sampleCountSlider = document.getElementById('sampleCountSlider');
-        const sampleCountValue = document.getElementById('sampleCountValue');
-        if (sampleCountSlider && sampleCountValue) {
-            sampleCountSlider.addEventListener('input', () => {
-                sampleCountValue.textContent = sampleCountSlider.value;
-            });
-        }
-        const tanimotoSlider = document.getElementById('tanimotoSlider');
-        const tanimotoValue = document.getElementById('tanimotoValue');
-        if (tanimotoSlider && tanimotoValue) {
-            tanimotoSlider.addEventListener('input', () => {
-                tanimotoValue.textContent = tanimotoSlider.value;
-            });
-        }
+        // 5 组范围滑块
+        this._bindRangeSliderPair('mwMinSlider', 'mwMaxSlider', 'mwMinValue', 'mwMaxValue', 'int');
+        this._bindRangeSliderPair('logpMinSlider', 'logpMaxSlider', 'logpMinValue', 'logpMaxValue', 'float');
+        this._bindRangeSliderPair('hbdMinSlider', 'hbdMaxSlider', 'hbdMinValue', 'hbdMaxValue', 'int');
+        this._bindRangeSliderPair('hbaMinSlider', 'hbaMaxSlider', 'hbaMinValue', 'hbaMaxValue', 'int');
+        this._bindRangeSliderPair('rotBondsMinSlider', 'rotBondsMaxSlider', 'rotBondsMinValue', 'rotBondsMaxValue', 'int');
+
+        // 单值滑块
+        this._bindSingleSlider('qedSlider', 'qedValue', v => parseFloat(v).toFixed(2));
+        this._bindSingleSlider('saSlider', 'saValue', v => parseFloat(v).toFixed(1));
+        this._bindSingleSlider('sampleCountSlider', 'sampleCountValue', v => v);
+        this._bindSingleSlider('scaffoldNumSlider', 'scaffoldNumValue', v => v);
     }
 
     // 显示错误提示
@@ -333,7 +183,122 @@ class MoleculeDesignPlatform {
         
         // 显示对应面板
         document.getElementById('genPanel').style.display = id === 'genPanel' ? 'block' : 'none';
+        const scaffoldPanel = document.getElementById('scaffoldPanel');
+        if (scaffoldPanel) scaffoldPanel.style.display = id === 'scaffoldPanel' ? 'block' : 'none';
         document.getElementById('trainPanel').style.display = id === 'trainPanel' ? 'block' : 'none';
+    }
+
+    // 骨架跃迁与优化：提交任务并轮询结果
+    async runScaffoldOptimize() {
+        const hitSmiles = (document.getElementById('scaffoldHitSmiles') && document.getElementById('scaffoldHitSmiles').value || '').trim();
+        if (!hitSmiles) {
+            this.showErrorToast('请填写苗头化合物 SMILES');
+            return;
+        }
+        const targetProperty = document.getElementById('scaffoldTargetProperty') && document.getElementById('scaffoldTargetProperty').value || 'log_solubility';
+        const optimizeDirection = document.getElementById('scaffoldDirection') && document.getElementById('scaffoldDirection').value || 'max';
+        const numCandidates = parseInt(document.getElementById('scaffoldNumSlider') && document.getElementById('scaffoldNumSlider').value || 100, 10);
+
+        try {
+            const scaffoldModel = document.getElementById('scaffoldModelSelect') && document.getElementById('scaffoldModelSelect').value || '';
+            const res = await fetch('/scaffold_optimize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    hit_smiles: hitSmiles,
+                    target_property: targetProperty,
+                    optimize_direction: optimizeDirection,
+                    num_candidates: numCandidates,
+                    model_file: scaffoldModel
+                })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                this.showErrorToast(data.error || '请求失败');
+                return;
+            }
+            this.startScaffoldOptimizePolling();
+        } catch (e) {
+            this.showErrorToast('网络错误: ' + (e.message || ''));
+        }
+    }
+
+    startScaffoldOptimizePolling() {
+        const progressBar = document.getElementById('scaffoldProgressBar');
+        const progressPercentEl = document.getElementById('scaffoldProgressPercent');
+        const logArea = document.getElementById('scaffoldLogs');
+        const btn = document.getElementById('scaffoldOptimizeBtn');
+        if (btn) btn.disabled = true;
+
+        const escapeHtml = (str) => ('' + (str ?? '')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const updateUI = (data) => {
+            const total = data.total_samples || 1;
+            const current = data.current_sample || 0;
+            const pct = total ? Math.round((current / total) * 100) : 0;
+            if (progressBar) progressBar.style.width = pct + '%';
+            if (progressPercentEl) progressPercentEl.textContent = pct + '%';
+            if (logArea && Array.isArray(data.logs)) {
+                logArea.innerHTML = data.logs.map(l => `<div class="log-line">${escapeHtml(l)}</div>`).join('');
+                logArea.scrollTop = logArea.scrollHeight;
+            }
+        };
+
+        const stopPolling = () => {
+            if (this.scaffoldPollInterval) {
+                clearInterval(this.scaffoldPollInterval);
+                this.scaffoldPollInterval = null;
+            }
+            if (btn) btn.disabled = false;
+        };
+
+        const poll = async () => {
+            try {
+                const res = await fetch('/get_scaffold_optimize_status');
+                const data = await res.json();
+                updateUI(data);
+                if (data.status === 'success') {
+                    stopPolling();
+                    const resultEl = document.getElementById('scaffoldResultDisplay');
+                    const emptyEl = document.getElementById('scaffoldEmptyState');
+                    const derivatives = data.derivatives || [];
+                    if (derivatives.length > 0) {
+                        if (emptyEl) emptyEl.style.display = 'none';
+                        if (resultEl) resultEl.style.display = 'block';
+                        const hitImg = document.getElementById('scaffoldHitImg');
+                        const hitSmilesEl = document.getElementById('scaffoldHitSmilesDisplay');
+                        if (hitImg && data.hit_image) hitImg.src = 'data:image/png;base64,' + data.hit_image;
+                        if (hitSmilesEl && data.hit_smiles) hitSmilesEl.innerText = data.hit_smiles;
+                        window.moleculeApp.scaffoldHitMetrics = data.hit_metrics || {};
+                        const list = derivatives.map(d => ({ ...d, metrics: d.metrics || {} }));
+                        window.moleculeApp.scaffoldDerivatives = list;
+                        window.moleculeApp.displayScaffoldMolecule(list[0]);
+                        window.moleculeApp.addScaffoldSwitcher(list, data.target_property);
+                    } else {
+                        if (resultEl) resultEl.style.display = 'none';
+                        if (emptyEl) {
+                            emptyEl.style.display = 'block';
+                            emptyEl.innerHTML = `
+                                <i class="bi bi-exclamation-circle display-4 text-warning"></i>
+                                <p class="mt-3 mb-2 fw-bold">未得到有效衍生物</p>
+                                <p class="small text-muted mb-1">本次未得到可用衍生物。</p>
+                                <p class="small text-muted mb-0">建议：更换 Hit 或调整目标性质后重试。</p>
+                                ${(data.hit_scaffold ? `<p class="small text-muted mt-2 mb-0">当前 Hit 骨架: <code>${escapeHtml(data.hit_scaffold)}</code></p>` : '')}
+                            `;
+                        }
+                    }
+                }
+                if (data.status === 'error') {
+                    stopPolling();
+                    this.showErrorToast(data.error || '骨架优化失败');
+                }
+            } catch (e) {
+                stopPolling();
+                this.showErrorToast('轮询失败');
+            }
+        };
+
+        poll();
+        this.scaffoldPollInterval = setInterval(poll, 1500);
     }
 
     // 加载模型列表
@@ -341,8 +306,14 @@ class MoleculeDesignPlatform {
         try {
             const res = await fetch('/get_models');
             const data = await res.json();
+            const models = data.models || [];
+            const optionsHtml = models.length
+                ? models.map(m => `<option value="${m}">${m}</option>`).join('')
+                : '<option value="">暂无模型</option>';
             const modelSelect = document.getElementById('modelSelect');
-            modelSelect.innerHTML = data.models.map(model => `<option value="${model}">${model}</option>`).join('');
+            if (modelSelect) modelSelect.innerHTML = optionsHtml;
+            const scaffoldModelSelect = document.getElementById('scaffoldModelSelect');
+            if (scaffoldModelSelect) scaffoldModelSelect.innerHTML = optionsHtml;
         } catch(e) {
             console.error("模型列表获取失败", e);
         }
@@ -679,6 +650,124 @@ class MoleculeDesignPlatform {
         }
     }
 
+    // 骨架优化：展示单个衍生物（与 Hit 对比）
+    displayScaffoldMolecule(mol) {
+        if (!mol) return;
+        const imgEl = document.getElementById('scaffoldMolImg');
+        const smilesEl = document.getElementById('scaffoldSmilesCode');
+        if (imgEl) imgEl.src = mol.image ? 'data:image/png;base64,' + mol.image : '';
+        if (smilesEl) smilesEl.innerText = mol.smiles || '';
+        const metrics = mol.metrics || {};
+        const hitMetrics = this.scaffoldHitMetrics || {};
+        const tbody = document.getElementById('scaffoldCompareTableBody');
+        const mkNum = (v, d = 3) => (v == null || Number.isNaN(Number(v))) ? '—' : Number(v).toFixed(d);
+        const mkDiff = (a, b, reverseGood = false) => {
+            if (a == null || b == null || Number.isNaN(Number(a)) || Number.isNaN(Number(b))) return '—';
+            const delta = Number(b) - Number(a);
+            const sign = delta > 0 ? '+' : '';
+            const good = reverseGood ? (delta < 0) : (delta > 0);
+            const cls = delta === 0 ? 'text-muted' : (good ? 'text-success' : 'text-danger');
+            return `<span class=\"${cls}\">${sign}${delta.toFixed(3)}</span>`;
+        };
+        if (tbody) {
+            const rows = [
+                ['QED', hitMetrics.qed, metrics.qed, false, 3],
+                ['logP', hitMetrics.logp, metrics.logp, false, 3],
+                ['MW', hitMetrics.mw, metrics.mw, false, 2],
+                ['HBD', hitMetrics.hbd, metrics.hbd, true, 0],
+                ['HBA', hitMetrics.hba, metrics.hba, true, 0],
+                ['TPSA', hitMetrics.tpsa, metrics.tpsa, false, 2],
+                ['SA Score', hitMetrics.sa_score, metrics.sa_score, true, 3],
+                ['ESOL logS', hitMetrics.log_solubility, metrics.log_solubility, false, 3],
+            ];
+            tbody.innerHTML = rows.map(([name, hv, cv, reverseGood, digits]) => `
+                <tr>
+                    <td>${name}</td>
+                    <td>${mkNum(hv, digits)}</td>
+                    <td><strong>${mkNum(cv, digits)}</strong></td>
+                    <td>${mkDiff(hv, cv, reverseGood)}</td>
+                </tr>
+            `).join('');
+        }
+
+    }
+
+    addScaffoldSwitcher(derivatives, targetProperty) {
+        const container = document.getElementById('scaffoldSwitcher');
+        if (!container) return;
+        const propLabel = targetProperty === 'log_solubility' ? '水溶性' : (targetProperty === 'qed' ? 'QED' : targetProperty);
+        const select = document.createElement('select');
+        select.id = 'scaffoldMoleculeSelect';
+        select.className = 'form-select';
+        select.innerHTML = derivatives.map((mol, i) => {
+            const val = mol.target_value != null ? Number(mol.target_value).toFixed(3) : '—';
+            return `<option value="${i}">分子 ${i + 1} (${propLabel}: ${val})</option>`;
+        }).join('');
+        select.addEventListener('change', () => {
+            const idx = parseInt(select.value, 10);
+            if (!isNaN(idx) && this.scaffoldDerivatives && this.scaffoldDerivatives[idx]) {
+                this.displayScaffoldMolecule(this.scaffoldDerivatives[idx]);
+                this.updateScaffoldPrevNextButtons();
+            }
+        });
+        const prevBtn = document.createElement('button');
+        prevBtn.type = 'button';
+        prevBtn.className = 'btn btn-sm btn-outline-primary';
+        prevBtn.textContent = '上一个';
+        prevBtn.id = 'scaffoldPrevBtn';
+        prevBtn.addEventListener('click', () => {
+            const sel = document.getElementById('scaffoldMoleculeSelect');
+            if (!sel || !this.scaffoldDerivatives || !this.scaffoldDerivatives.length) return;
+            const idx = parseInt(sel.value, 10);
+            if (idx > 0) this.switchScaffoldMolecule(idx - 1);
+            this.updateScaffoldPrevNextButtons();
+        });
+        const nextBtn = document.createElement('button');
+        nextBtn.type = 'button';
+        nextBtn.className = 'btn btn-sm btn-outline-primary';
+        nextBtn.textContent = '下一个';
+        nextBtn.id = 'scaffoldNextBtn';
+        nextBtn.addEventListener('click', () => {
+            const sel = document.getElementById('scaffoldMoleculeSelect');
+            if (!sel || !this.scaffoldDerivatives || !this.scaffoldDerivatives.length) return;
+            const idx = parseInt(sel.value, 10);
+            if (idx < this.scaffoldDerivatives.length - 1) this.switchScaffoldMolecule(idx + 1);
+            this.updateScaffoldPrevNextButtons();
+        });
+        container.innerHTML = '';
+        const label = document.createElement('label');
+        label.className = 'form-label text-primary mb-1';
+        label.textContent = '切换衍生物 (按目标性质排序)';
+        container.appendChild(label);
+        const row = document.createElement('div');
+        row.className = 'd-flex align-items-center gap-2 flex-wrap';
+        row.appendChild(select);
+        row.appendChild(prevBtn);
+        row.appendChild(nextBtn);
+        container.appendChild(row);
+        this.scaffoldDerivatives = derivatives;
+        this.updateScaffoldPrevNextButtons();
+    }
+
+    updateScaffoldPrevNextButtons() {
+        const select = document.getElementById('scaffoldMoleculeSelect');
+        const prevBtn = document.getElementById('scaffoldPrevBtn');
+        const nextBtn = document.getElementById('scaffoldNextBtn');
+        if (!select || !prevBtn || !nextBtn || !this.scaffoldDerivatives || !this.scaffoldDerivatives.length) return;
+        const idx = parseInt(select.value, 10);
+        const total = this.scaffoldDerivatives.length;
+        prevBtn.disabled = idx <= 0;
+        nextBtn.disabled = idx >= total - 1;
+    }
+
+    switchScaffoldMolecule(index) {
+        if (this.scaffoldDerivatives && this.scaffoldDerivatives[index]) {
+            this.displayScaffoldMolecule(this.scaffoldDerivatives[index]);
+            const select = document.getElementById('scaffoldMoleculeSelect');
+            if (select) select.value = String(index);
+        }
+    }
+
     // 生成分子
     async generateMolecule() {
         const genBtn = document.getElementById('genBtn');
@@ -700,8 +789,8 @@ class MoleculeDesignPlatform {
                 body: JSON.stringify({
                     model_file: document.getElementById('modelSelect').value,
                     sample_count: parseInt(document.getElementById('sampleCountSlider').value),
-                    decode_batch_size: parseInt(document.getElementById('decodeBatchSizeSelect').value),
-                    tanimoto_threshold: parseFloat(document.getElementById('tanimotoSlider').value),
+                    decode_batch_size: 4,
+                    tanimoto_threshold: 0.90,
                     // 分子约束参数
                     constraints: {
                         // 使用滑块值作为约束参数
@@ -750,10 +839,6 @@ class MoleculeDesignPlatform {
 // 全局函数，用于HTML中的事件调用
 function switchTab(id, el) {
     window.moleculeApp.switchTab(id, el);
-}
-
-function loadModels() {
-    window.moleculeApp.loadModels();
 }
 
 // 页面加载完成后初始化应用
